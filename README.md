@@ -1,4 +1,9 @@
-# 🤖 Jailbot
+<div align="center">
+<img width="320" height="235" alt="Jailbot as Jailpup" src="./assets/jailpup.jpg">
+
+# Jailbot 2.0
+
+</div>
 
 **A Docker Linux container wrapper with automatic filesystem path mounting**
 
@@ -32,7 +37,7 @@ Jailbot automatically detects paths in your arguments and mounts them transparen
 
 ```bash
 # With jailbot - simple and intuitive
-jailbot --git ./script.sh ~/config.json
+jailbot --git -- ./script.sh ~/config.json
 ```
 
 No manual mounting, no path translation — just run commands naturally as if the container were your local shell.
@@ -142,7 +147,7 @@ Reload your shell:
 source ~/.bashrc  # or source ~/.zshrc
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -194,13 +199,13 @@ docker volume create jailbot_root
 export JAILBOT_CONTAINER_VOLUME="jailbot_root"
 
 # Install fnm (Fast Node Manager) - this persists!
-jailbot bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
+jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
 
 # Install Node.js - also persists!
-jailbot bash -c "source ~/.bashrc && fnm install 20 && fnm use 20"
+jailbot -- bash -c "source ~/.bashrc && fnm install 20 && fnm use 20"
 
 # Now Node.js is available in all future sessions
-jailbot node --version  # Works every time!
+jailbot -- node --version  # Works every time!
 ```
 
 ### Command-Line Options
@@ -212,68 +217,84 @@ jailbot node --version  # Works every time!
 | `--workdir=PATH` | Mount directory directly into `/workspace` |
 | `--help` | Show help message |
 
+### Syntax
+
+```bash
+jailbot [OPTIONS] [--] [COMMAND...]
+```
+
+Use `--` to separate jailbot options from the container command:
+- **Everything before `--`** — Jailbot options (`--verbose`, `--git`, `--workdir`)
+- **Everything after `--`** — Command and arguments to run inside container
+
+**Example:**
+```bash
+# Options for jailbot, then command for container
+jailbot --verbose --git -- git status
+```
+
 ## Usage
 
 ### Basic Examples
 
 ```bash
 # Run a local script
-jailbot ./myscript.sh
+jailbot -- ./myscript.sh
 
 # Process a local file
-jailbot cat ./data.txt
+jailbot -- cat ./data.txt
 
 # Work with multiple files
-jailbot python3 ./process.py ./input.csv ./output.json
+jailbot -- python3 ./process.py ./input.csv ./output.json
 
 # Use files from different directories
-jailbot node ~/projects/app.js ~/config/settings.json
+jailbot -- node ~/projects/app.js ~/config/settings.json
 ```
 
 ### Interactive Shell
 
 ```bash
 # Start an interactive shell
-jailbot bash
+jailbot -- bash
 
 # Start shell in a specific directory
-jailbot --workdir=./myproject bash
+jailbot --workdir=./myproject -- bash
 
 # Start shell with Git configured
-jailbot --git bash
+jailbot --git -- bash
 ```
 
 ### Git Operations
 
 ```bash
 # Mount git config and run git commands
-jailbot --git git status
-jailbot --git git commit -m "Update"
-jailbot --git git push
+jailbot --git -- git status
+jailbot --git -- git commit -m "Update"
+jailbot --git -- git push
 ```
 
 ### Working with Directories
 
 ```bash
 # Mount current directory and list files
-jailbot --workdir=. ls -la
+jailbot --workdir=. -- ls -la
 
 # Run make in a project directory
-jailbot --workdir=./myproject make build
+jailbot --workdir=./myproject -- make build
 
 # Run npm commands
-jailbot --workdir=~/webapp npm install
-jailbot --workdir=~/webapp npm test
+jailbot --workdir=~/webapp -- npm install
+jailbot --workdir=~/webapp -- npm test
 ```
 
 ### Debugging
 
 ```bash
 # See what's being mounted
-jailbot --verbose ./script.sh ./data.txt
+jailbot --verbose -- ./script.sh ./data.txt
 
 # Verbose output with Git config
-jailbot --verbose --git git status
+jailbot --verbose --git -- git status
 ```
 
 ## Advanced Examples
@@ -282,7 +303,7 @@ jailbot --verbose --git git status
 
 ```bash
 # Process data from multiple sources
-jailbot python3 ./analyze.py \
+jailbot -- python3 ./analyze.py \
   ~/data/2024/sales.csv \
   ~/data/2024/inventory.json \
   /tmp/output/report.pdf
@@ -294,7 +315,7 @@ jailbot python3 ./analyze.py \
 
 ```bash
 # Build a C++ project
-jailbot --workdir=./myproject bash -c "
+jailbot --workdir=./myproject -- bash -c "
   cmake -B build &&
   cmake --build build &&
   ctest --test-dir build
@@ -305,7 +326,7 @@ jailbot --workdir=./myproject bash -c "
 
 ```bash
 # Chain multiple commands
-jailbot --workdir=./data bash -c "
+jailbot --workdir=./data -- bash -c "
   python3 extract.py raw.csv > processed.csv &&
   python3 analyze.py processed.csv > results.json &&
   cat results.json
@@ -316,13 +337,13 @@ jailbot --workdir=./data bash -c "
 
 ```bash
 # Test Python script in containerized environment
-jailbot python3 -m pytest ./tests/
+jailbot -- python3 -m pytest ./tests/
 
 # Run linting
-jailbot pylint ./src/*.py
+jailbot -- pylint ./src/*.py
 
 # Check types
-jailbot mypy ./src/
+jailbot -- mypy ./src/
 ```
 
 ### Node.js Development with Persistent Environment
@@ -334,30 +355,30 @@ jailbot mypy ./src/
 export JAILBOT_CONTAINER_VOLUME="jailbot_root"
 
 # Install fnm (one-time setup)
-jailbot bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
+jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
 
 # Install Node.js versions (persists across sessions)
-jailbot bash -c "source ~/.bashrc && fnm install 20 && fnm default 20"
-jailbot bash -c "source ~/.bashrc && fnm install 18"
+jailbot -- bash -c "source ~/.bashrc && fnm install 20 && fnm default 20"
+jailbot -- bash -c "source ~/.bashrc && fnm install 18"
 
 # Use Node.js
-jailbot --workdir=./my-app bash -c "source ~/.bashrc && npm install"
-jailbot --workdir=./my-app bash -c "source ~/.bashrc && npm run build"
-jailbot --workdir=./my-app bash -c "source ~/.bashrc && npm test"
+jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm install"
+jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm run build"
+jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm test"
 
 # Switch Node.js versions easily
-jailbot bash -c "source ~/.bashrc && fnm use 18 && node --version"
+jailbot -- bash -c "source ~/.bashrc && fnm use 18 && node --version"
 ```
 
 **Install global npm packages (with persistence):**
 
 ```bash
 # Install global tools (one-time setup)
-jailbot bash -c "source ~/.bashrc && npm install -g typescript eslint prettier"
+jailbot -- bash -c "source ~/.bashrc && npm install -g typescript eslint prettier"
 
 # Use them in your projects
-jailbot --workdir=./my-project bash -c "source ~/.bashrc && tsc --init"
-jailbot --workdir=./my-project bash -c "source ~/.bashrc && eslint src/"
+jailbot --workdir=./my-project -- bash -c "source ~/.bashrc && tsc --init"
+jailbot --workdir=./my-project -- bash -c "source ~/.bashrc && eslint src/"
 ```
 
 ## How It Works
@@ -462,13 +483,13 @@ export JAILBOT_IMAGE_NAME="myimage:latest"
 **Solution:**
 ```bash
 # Use --verbose to see what's happening
-jailbot --verbose ./myscript.sh ./data.txt
+jailbot --verbose -- ./myscript.sh ./data.txt
 
 # Check if path exists
 ls -la ./myscript.sh
 
 # Try absolute path
-jailbot --verbose "$(pwd)/myscript.sh"
+jailbot --verbose -- "$(pwd)/myscript.sh"
 ```
 
 ### Container can't find files
@@ -478,11 +499,10 @@ jailbot --verbose "$(pwd)/myscript.sh"
 **Solution:**
 ```bash
 # Verify you're passing the path as argument
-jailbot ls -la ./myfile.txt  # ✅ Correct
-jailbot ls -la myfile.txt    # ❌ Won't mount (no path indicator)
+jailbot -- ls -la ./myfile.txt  # ✅ Correct
 
 # Use --workdir for current directory access
-jailbot --workdir=. ls -la   # ✅ Mounts current directory
+jailbot --workdir=. -- ls -la   # ✅ Mounts current directory
 ```
 
 ### Permission denied errors
@@ -512,13 +532,13 @@ chmod 755 ./mydir
 
 ```bash
 # Use --git flag
-jailbot --git git status
+jailbot --git -- git status
 
 # Verify git config exists on host
 ls -la ~/.gitconfig
 
 # Check if Git is installed in container
-jailbot which git
+jailbot -- which git
 ```
 
 ## License
@@ -540,5 +560,4 @@ When reporting issues, please include:
 
 ---
 
-Made with 🔧 for seamless Docker workflows
-# jailbot
+Made with 🤖 for seamless Docker workflows.

@@ -53,6 +53,7 @@ No manual mounting, no path translation — just run commands naturally as if th
 - **Timezone Sync** — Automatically syncs host timezone to container
 - **Interactive Detection** — Smart TTY detection for interactive shells
 - **Duplicate Prevention** — Avoids mounting the same path multiple times
+- **Escaped Paths** — Prefix path with `\` to pass it without mounting (e.g., `\\/dev/null`)
 - **POSIX Compliant** — Works on Linux, macOS, and BSD systems
 
 ## Requirements
@@ -297,6 +298,14 @@ jailbot --verbose -- ./script.sh ./data.txt
 jailbot --verbose --git -- git status
 ```
 
+### System Paths
+
+```bash
+# Pass system paths without mounting (use backslash prefix)
+jailbot -- curl -o \\/dev/null http://example.com
+jailbot -- cat \\/proc/cpuinfo
+```
+
 ## Advanced Examples
 
 ### Complex Development Workflow
@@ -385,17 +394,21 @@ jailbot --workdir=./my-project -- bash -c "source ~/.bashrc && eslint src/"
 
 ### Path Detection
 
-Jailbot identifies path arguments using these patterns:
+Jailbot identifies path arguments by checking if they exist as files or directories on the host filesystem.
 
+**Supported path formats:**
 - `./relative/path` — Relative paths
 - `../parent/path` — Parent directory references
 - `~/home/path` — Tilde expansion
 - `/absolute/path` — Absolute paths
-- `any/path/with/slash` — Paths containing `/`
+
+**Escaped paths (no mounting):**
+- `\/path/to/file` — Prefix with `\` to pass path as argument without mounting
+- Example: `jailbot -- curl -o \\/dev/null http://example.com`
 
 **Excluded patterns:**
-- `http://`, `https://`, `ftp://`, `file://` — URLs
-- `@scope/package` — NPM scoped packages
+- `http://`, `https://`, `ftp://`, `file://` — URLs (not files)
+- `@scope/package` — NPM scoped packages (don't exist as files)
 - `/workspace/*` — Container-internal paths
 
 ### Mounting Strategy

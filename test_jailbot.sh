@@ -280,6 +280,56 @@ test_pipe_input() {
   fi
 }
 
+# Test 18: Escaped paths (prefixed with backslash)
+test_escaped_path() {
+  log_test "Testing escaped path handling"
+
+  # Create test files for absolute and relative paths
+  test_dir="/tmp/jailbot_escaped_test_$$"
+  mkdir -p "$test_dir"
+  echo "absolute" > "$test_dir/absolute.txt"
+
+  # Also create relative path test structure
+  rel_test_dir="/tmp/jailbot_rel_test_$$"
+  mkdir -p "$rel_test_dir/subdir"
+  echo "relative" > "$rel_test_dir/subdir/file.txt"
+
+  # Test 1: Escaped absolute path should be unescaped and not mounted
+  # Use verbose mode to check that the escaped path is passed through
+  escaped_abs_path="\\${test_dir}/absolute.txt"
+  output=$(JAILBOT_IMAGE_NAME=test $SCRIPT --verbose -- "$escaped_abs_path" 2>&1) || true
+  if echo "$output" | grep -q "Escaped path, passing through.*$test_dir/absolute.txt"; then
+    log_pass "Escaped absolute path is unescaped"
+  else
+    log_fail "Escaped absolute path not properly unescaped"
+  fi
+
+  # Test 2: Escaped relative path should be unescaped
+  cd "$rel_test_dir/subdir"
+  escaped_rel_path="\\../subdir/file.txt"
+  output=$(JAILBOT_IMAGE_NAME=test "$TEST_DIR/$SCRIPT" --verbose -- "$escaped_rel_path" 2>&1) || true
+  if echo "$output" | grep -q "Escaped path, passing through.*../subdir/file.txt"; then
+    log_pass "Escaped relative path is unescaped"
+  else
+    log_fail "Escaped relative path not properly unescaped"
+  fi
+  cd "$TEST_DIR"
+
+  # Test 3: Escaped ./ relative path
+  cd "$rel_test_dir/subdir"
+  escaped_dot_path="\\./file.txt"
+  output=$(JAILBOT_IMAGE_NAME=test "$TEST_DIR/$SCRIPT" --verbose -- "$escaped_dot_path" 2>&1) || true
+  if echo "$output" | grep -q "Escaped path, passing through.*./file.txt"; then
+    log_pass "Escaped ./ relative path is unescaped"
+  else
+    log_fail "Escaped ./ relative path not properly unescaped"
+  fi
+  cd "$TEST_DIR"
+
+  # Cleanup
+  rm -rf "$test_dir" "$rel_test_dir"
+}
+
 # Main test runner
 main() {
   printf "========================================\n"
@@ -311,7 +361,8 @@ main() {
   test_verbose_mode
   test_git_config
   test_pipe_input
-  
+  test_escaped_path
+
   printf "\n========================================\n"
   printf "Test Results:\n"
   printf "  Passed: %d\n" "$PASSED"

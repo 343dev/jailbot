@@ -158,11 +158,25 @@ get_absolute_path() {
 
 is_path_argument() {
   arg="${1:-}"
+
+  # Reject escaped paths (prefixed with \)
   case "$arg" in
-    http://*|https://*|ftp://*|file://*) return 1 ;;
-    ./*|../*|"~"/*|/*|*/*) return 0 ;;
-    *) return 1 ;;
+    \\*) return 1 ;;
   esac
+
+  # Reject npm scoped packages (@scope/pkg)
+  case "$arg" in
+    @*) return 1 ;;
+  esac
+
+  # Expand tilde before checking existence
+  case "$arg" in
+    "~"/*)
+      arg="${HOME}${arg#\~}"
+      ;;
+  esac
+
+  [ -e "$arg" ]
 }
 
 # ============================================================================
@@ -282,10 +296,13 @@ handle_path_argument() {
     return
   fi
 
-  # Skip npm package names (start with @)
+  # Handle escaped paths (prefixed with \) - pass through without mounting
   case "$arg" in
-    @*)
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+    \\*)
+      # Remove the leading backslash and pass as regular argument
+      unescaped_path="${arg#\\}"
+      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$unescaped_path" | sed 's/"/\\"/g')"
+      log_verbose "Escaped path, passing through: $unescaped_path"
       return
       ;;
   esac
@@ -293,6 +310,12 @@ handle_path_argument() {
   # Check if this is a path argument
   if [ ! -e "$arg" ] && ! is_path_argument "$arg"; then
     # Not a path, treat as regular argument
+    CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+    return
+  fi
+
+  # If it exists but is_path_argument rejected it, treat as regular arg
+  if [ -e "$arg" ] && ! is_path_argument "$arg"; then
     CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
     return
   fi

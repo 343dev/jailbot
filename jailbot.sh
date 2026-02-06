@@ -298,6 +298,13 @@ handle_path_argument() {
 
   # Handle escaped paths (prefixed with \) - pass through without mounting
   case "$arg" in
+    \\~/*)
+      # Convert escaped ~/ to /root/
+      unescaped_path="/root${arg#\\\~}"
+      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$unescaped_path" | sed 's/"/\\"/g')"
+      log_verbose "Converted escaped ~/ to /root: $unescaped_path"
+      return
+      ;;
     \\*)
       # Remove the leading backslash and pass as regular argument
       unescaped_path="${arg#\\}"

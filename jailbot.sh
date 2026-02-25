@@ -25,9 +25,14 @@ readonly CONTAINER_WORKDIR="/workspace"
 # Runtime state (POSIX-compatible)
 VERBOSE=false
 MOUNT_GIT=false
-MOUNTS=""
-CONTAINER_ARGS=""
-TEMP_FILE=""
+
+# Use newline-delimited in-memory lists so paths with spaces stay intact.
+# Note: paths containing literal newlines are not supported.
+NL='
+'
+MOUNTED_HOSTS_NL=""
+MOUNT_SPECS_NL=""
+CONTAINER_ARGS_NL=""
 
 # ============================================================================
 # SECTION 1: UTILITY FUNCTIONS
@@ -79,10 +84,7 @@ validate_docker() {
 # ============================================================================
 
 cleanup() {
-  if [ -n "${TEMP_FILE:-}" ] && [ -f "$TEMP_FILE" ]; then
-    rm -f "$TEMP_FILE"
-    log_verbose "Cleaned up temporary file"
-  fi
+  :
 }
 
 setup_signals() {
@@ -184,11 +186,32 @@ is_path_argument() {
 # ============================================================================
 
 init_mount_tracking() {
-  TEMP_FILE="$(mktemp -t jailbot_sh_mounts.XXXXXX)"
-  if [ -z "$TEMP_FILE" ] || [ ! -f "$TEMP_FILE" ]; then
-    log_error "Failed to create temporary file for mount tracking"
+  MOUNTED_HOSTS_NL=""
+  MOUNT_SPECS_NL=""
+  CONTAINER_ARGS_NL=""
+  log_verbose "Initialized mount tracking (in-memory)"
+}
+
+add_container_arg() {
+  value="${1:-}"
+
+  # Empty args are currently ignored by design.
+  if [ -z "$value" ]; then
+    return 0
   fi
-  log_verbose "Initialized mount tracking: $TEMP_FILE"
+
+  case "$value" in
+    *"$NL"*)
+      log_warning "Skipping argument containing newline (unsupported)"
+      return 1
+      ;;
+  esac
+
+  if [ -z "$CONTAINER_ARGS_NL" ]; then
+    CONTAINER_ARGS_NL="$value"
+  else
+    CONTAINER_ARGS_NL="${CONTAINER_ARGS_NL}${NL}${value}"
+  fi
 }
 
 is_already_mounted() {
@@ -197,7 +220,14 @@ is_already_mounted() {
     return 1
   fi
 
-  if [ -f "$TEMP_FILE" ] && grep -Fxq "$search_path" "$TEMP_FILE" 2>/dev/null; then
+  if [ -z "$MOUNTED_HOSTS_NL" ]; then
+    return 1
+  fi
+
+  if grep -Fxq -- "$search_path" <<EOF
+$MOUNTED_HOSTS_NL
+EOF
+  then
     return 0
   fi
   return 1
@@ -226,15 +256,46 @@ add_mount() {
     return 1
   fi
 
-  # Record mount
-  printf "%s\n" "$host_path" >> "$TEMP_FILE"
+  case "$host_path" in
+    *"$NL"*)
+      log_warning "Skipping mount with newline in path (unsupported): $host_path"
+      return 1
+      ;;
+  esac
 
-  # Add to mount arguments (space-separated list for POSIX compatibility)
-  # Using printf for safe concatenation
-  if [ "$readonly_flag" = "readonly" ]; then
-    MOUNTS="${MOUNTS} --mount type=bind,source=${host_path},target=${container_path},readonly"
+  case "$container_path" in
+    *"$NL"*)
+      log_warning "Skipping mount with newline in path (unsupported): $host_path"
+      return 1
+      ;;
+  esac
+
+  # Record mount (newline-delimited list)
+  if [ -z "$MOUNTED_HOSTS_NL" ]; then
+    MOUNTED_HOSTS_NL="$host_path"
   else
-    MOUNTS="${MOUNTS} --mount type=bind,source=${host_path},target=${container_path}"
+    MOUNTED_HOSTS_NL="${MOUNTED_HOSTS_NL}${NL}${host_path}"
+  fi
+
+  # Docker's --mount parser uses commas as separators; paths containing commas
+  # are not reliably representable.
+  case "${host_path}${container_path}" in
+    *,*)
+      log_warning "Skipping mount (comma in path unsupported by docker --mount): $host_path"
+      return 1
+      ;;
+  esac
+
+  if [ "$readonly_flag" = "readonly" ]; then
+    spec="type=bind,source=$host_path,target=$container_path,readonly"
+  else
+    spec="type=bind,source=$host_path,target=$container_path"
+  fi
+
+  if [ -z "$MOUNT_SPECS_NL" ]; then
+    MOUNT_SPECS_NL="$spec"
+  else
+    MOUNT_SPECS_NL="${MOUNT_SPECS_NL}${NL}${spec}"
   fi
   log_verbose "Added mount: $host_path -> $container_path"
   return 0
@@ -301,14 +362,14 @@ handle_path_argument() {
     \\~/*)
       # Convert escaped ~/ to /root/
       unescaped_path="/root${arg#\\\~}"
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$unescaped_path" | sed 's/"/\\"/g')"
+      add_container_arg "$unescaped_path"
       log_verbose "Converted escaped ~/ to /root: $unescaped_path"
       return
       ;;
     \\*)
       # Remove the leading backslash and pass as regular argument
       unescaped_path="${arg#\\}"
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$unescaped_path" | sed 's/"/\\"/g')"
+      add_container_arg "$unescaped_path"
       log_verbose "Escaped path, passing through: $unescaped_path"
       return
       ;;
@@ -317,13 +378,13 @@ handle_path_argument() {
   # Check if this is a path argument
   if [ ! -e "$arg" ] && ! is_path_argument "$arg"; then
     # Not a path, treat as regular argument
-    CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+    add_container_arg "$arg"
     return
   fi
 
   # If it exists but is_path_argument rejected it, treat as regular arg
   if [ -e "$arg" ] && ! is_path_argument "$arg"; then
-    CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+    add_container_arg "$arg"
     return
   fi
 
@@ -333,7 +394,7 @@ handle_path_argument() {
   case "$abs_path" in
     /workspace*)
       log_warning "Skipping container workdir path: $arg"
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+      add_container_arg "$arg"
       return
       ;;
   esac
@@ -341,7 +402,7 @@ handle_path_argument() {
   # Validate path exists
   if [ ! -e "$abs_path" ]; then
     log_warning "Path does not exist: $abs_path"
-    CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+    add_container_arg "$arg"
     return
   fi
 
@@ -354,17 +415,17 @@ handle_path_argument() {
 
     # Use container path for the file
     file_path="$parent_container/$(basename "$abs_path")"
-    CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$file_path" | sed 's/"/\\"/g')"
+    add_container_arg "$file_path"
     log_verbose "Mapped file: $abs_path -> $file_path"
 
   elif [ -d "$abs_path" ]; then
     # Mount directory directly
     container_path="$(get_container_path "$abs_path")"
     if add_mount "$abs_path" "$container_path"; then
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$container_path" | sed 's/"/\\"/g')"
+      add_container_arg "$container_path"
       log_verbose "Mapped directory: $abs_path -> $container_path"
     else
-      CONTAINER_ARGS="${CONTAINER_ARGS} $(printf '%s' "$arg" | sed 's/"/\\"/g')"
+      add_container_arg "$arg"
     fi
   fi
 }
@@ -407,9 +468,15 @@ execute_container() {
   esac
 
   # Add mounts (evaluated safely)
-  if [ -n "$MOUNTS" ]; then
-    # shellcheck disable=SC2086
-    set -- "$@" $MOUNTS
+  if [ -n "$MOUNT_SPECS_NL" ]; then
+    while IFS= read -r spec; do
+      if [ -z "$spec" ]; then
+        continue
+      fi
+      set -- "$@" --mount "$spec"
+    done <<EOF
+$MOUNT_SPECS_NL
+EOF
   else
     log_verbose "No filesystem paths mounted"
   fi
@@ -427,12 +494,17 @@ execute_container() {
   log_verbose "Docker command: $*"
 
   # Add container arguments if any
-  if [ -n "$CONTAINER_ARGS" ]; then
+  if [ -n "$CONTAINER_ARGS_NL" ]; then
     # Add -- to separate docker options from container command
     set -- "$@" --
-    # shellcheck disable=SC2086
-    set -- "$@" $CONTAINER_ARGS
-    log_verbose "Container args: $CONTAINER_ARGS"
+    while IFS= read -r carg; do
+      if [ -z "$carg" ]; then
+        continue
+      fi
+      set -- "$@" "$carg"
+    done <<EOF
+$CONTAINER_ARGS_NL
+EOF
   fi
 
   log_verbose "Executing: docker run ..."

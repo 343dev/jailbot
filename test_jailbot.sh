@@ -95,6 +95,69 @@ test_path_with_spaces() {
   rm -rf "$TEST_DIR/path with spaces"
 }
 
+# Test 4b: Docker args preserve spaces (stub docker)
+test_docker_args_preserve_spaces() {
+  log_test "Testing docker args preserve spaces"
+
+  stub_dir="/tmp/jailbot_docker_stub_$$"
+  args_file="/tmp/jailbot_docker_run_args_$$.txt"
+  # Use /tmp (not under /workspace) so jailbot will mount it.
+  test_space_dir="/tmp/jailbot docker space test $$"
+
+  mkdir -p "$stub_dir"
+  cat > "$stub_dir/docker" <<'EOF'
+#!/bin/sh
+# Minimal docker stub for jailbot tests
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  info)
+    exit 0
+    ;;
+  image)
+    # jailbot uses: docker image inspect <name>
+    if [ "${1:-}" = "inspect" ]; then
+      exit 0
+    fi
+    exit 0
+    ;;
+  run)
+    if [ -z "${JAILBOT_DOCKER_RUN_ARGS_FILE:-}" ]; then
+      printf "missing JAILBOT_DOCKER_RUN_ARGS_FILE\n" >&2
+      exit 2
+    fi
+    : > "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+    for a in "$@"; do
+      printf "%s\n" "$a" >> "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+    done
+    exit 0
+    ;;
+esac
+
+exit 0
+EOF
+  chmod +x "$stub_dir/docker"
+
+  mkdir -p "$test_space_dir"
+  echo "x" > "$test_space_dir/file.txt"
+
+  PATH="$stub_dir:$PATH" \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_DOCKER_RUN_ARGS_FILE="$args_file" \
+    $SCRIPT --verbose -- "$test_space_dir/file.txt" >/dev/null 2>&1
+
+  if grep -Fq "type=bind,source=$test_space_dir,target=/workspace/$(basename "$test_space_dir")" "$args_file" \
+    && grep -Fq "/workspace/$(basename "$test_space_dir")/file.txt" "$args_file"; then
+    log_pass "Docker args preserve spaces"
+  else
+    log_fail "Docker args split spaces"
+  fi
+
+  rm -rf "$test_space_dir" "$stub_dir" "$args_file"
+}
+
 # Test 5: Special characters in path
 test_special_chars() {
   log_test "Testing special characters in path"
@@ -347,6 +410,7 @@ main() {
   test_unknown_flag
   test_empty_args
   test_path_with_spaces
+  test_docker_args_preserve_spaces
   test_special_chars
   test_nonexistent_path
   test_npm_package

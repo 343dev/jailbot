@@ -25,6 +25,7 @@ readonly CONTAINER_WORKDIR="/workspace"
 # Runtime state (POSIX-compatible)
 VERBOSE=false
 MOUNT_GIT=false
+MOUNT_SSH=false
 
 # Use newline-delimited in-memory lists so paths with spaces stay intact.
 # Note: paths containing literal newlines are not supported.
@@ -481,6 +482,27 @@ EOF
     log_verbose "No filesystem paths mounted"
   fi
 
+  # Add SSH agent forwarding if requested
+  if [ "$MOUNT_SSH" = true ]; then
+    SSH_AUTH_SOCK_HOST=""
+    OS_NAME="$(uname -s)"
+    if [ "$OS_NAME" = "Darwin" ]; then
+      # macOS: Docker Desktop provides a virtual socket path that doesn't
+      # exist on the host filesystem but is handled internally by Docker.
+      SSH_AUTH_SOCK_HOST="/run/host-services/ssh-auth.sock"
+    elif [ -n "${SSH_AUTH_SOCK:-}" ] && [ -e "$SSH_AUTH_SOCK" ]; then
+      SSH_AUTH_SOCK_HOST="$SSH_AUTH_SOCK"
+    fi
+
+    if [ -n "$SSH_AUTH_SOCK_HOST" ]; then
+      log_verbose "Forwarding SSH agent: $SSH_AUTH_SOCK_HOST"
+      set -- "$@" --volume "${SSH_AUTH_SOCK_HOST}:/ssh-auth.sock"
+      set -- "$@" --env "SSH_AUTH_SOCK=/ssh-auth.sock"
+    else
+      log_warning "SSH agent forwarding requested but no SSH auth socket found"
+    fi
+  fi
+
   # Add environment and volumes
   if [ -n "$TIME_ZONE" ]; then
     set -- "$@" --env "TZ=$TIME_ZONE"
@@ -531,6 +553,7 @@ OPTIONAL ENVIRONMENT VARIABLES:
 OPTIONS:
   --verbose         Enable verbose output
   --git             Mount Git configuration files (~/.gitconfig, ~/.config/git/ignore)
+  --ssh             Forward SSH agent socket into container
   --workdir=PATH    Mount directory directly into container's workdir (/workspace)
   --workdir PATH    Mount directory directly into container's workdir (/workspace)
   --help            Show this help message
@@ -554,9 +577,14 @@ FEATURES:
     ~/.gitconfig       	 -> /root/.gitconfig
     ~/.config/git/ignore -> /root/.config/git/ignore
 
+  Use --ssh flag to forward SSH agent into container:
+    Host socket ($SSH_AUTH_SOCK or /run/host-services/ssh-auth.sock)
+    is mounted at /ssh-auth.sock with SSH_AUTH_SOCK env variable set.
+
 EXAMPLES:
   ${script_name} --verbose -- ls -la
   ${script_name} --git -- git status
+  ${script_name} --ssh -- git clone git@github.com:user/repo.git
   ${script_name} --workdir=. -- bash
   ${script_name} --workdir=/home/user/projects -- myscript.sh
   ${script_name} -- cat ./local-file.txt
@@ -611,6 +639,11 @@ main() {
 
       --git)
         MOUNT_GIT=true
+        shift
+        ;;
+
+      --ssh)
+        MOUNT_SSH=true
         shift
         ;;
 

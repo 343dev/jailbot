@@ -50,6 +50,7 @@ No manual mounting, no path translation — just run commands naturally as if th
 - **Git Integration** — Optional mounting of `.gitconfig` and global git ignore
 - **Tilde Expansion** — Supports `~/path` notation
 - **Relative Paths** — Handles `./` and `../` paths correctly
+- **SSH Agent Forwarding** — Forward host SSH agent into container for git/ssh operations
 - **Timezone Sync** — Automatically syncs host timezone to container
 - **Interactive Detection** — Smart TTY detection for interactive shells
 - **Duplicate Prevention** — Avoids mounting the same path multiple times
@@ -215,6 +216,7 @@ jailbot -- node --version  # Works every time!
 |--------|-------------|
 | `--verbose` | Enable detailed logging |
 | `--git` | Mount Git configuration files (readonly) |
+| `--ssh` | Forward SSH agent socket into container |
 | `--workdir=PATH` | Mount directory directly into `/workspace` |
 | `--help` | Show help message |
 
@@ -272,6 +274,19 @@ jailbot --git -- bash
 jailbot --git -- git status
 jailbot --git -- git commit -m "Update"
 jailbot --git -- git push
+```
+
+### SSH Agent Forwarding
+
+```bash
+# Forward SSH agent and clone a repository
+jailbot --ssh -- git clone git@github.com:user/repo.git
+
+# Combine with --git for full Git+SSH workflow
+jailbot --git --ssh -- git push
+
+# Use SSH inside an interactive shell
+jailbot --ssh -- bash
 ```
 
 ### Working with Directories
@@ -434,6 +449,15 @@ With `--git` flag, mounts (readonly):
 - `~/.gitconfig` → `/root/.gitconfig`
 - `~/.config/git/ignore` → `/root/.config/git/ignore`
 
+### SSH Agent Forwarding
+
+With `--ssh` flag, forwards the host's SSH agent socket into the container:
+
+- **macOS** — Uses Docker Desktop's virtual socket path `/run/host-services/ssh-auth.sock`
+- **Linux** — Uses the `$SSH_AUTH_SOCK` environment variable
+
+The socket is mounted at `/ssh-auth.sock` inside the container with `SSH_AUTH_SOCK` environment variable set accordingly. This allows `git`, `ssh`, `scp`, and other SSH-based tools to use the host's SSH keys without copying them into the container.
+
 ## Troubleshooting
 
 ### Script fails with "Docker not found"
@@ -552,6 +576,29 @@ ls -la ~/.gitconfig
 
 # Check if Git is installed in container
 jailbot -- which git
+```
+
+### SSH agent not working inside container
+
+**Problem:** `--ssh` flag is set but SSH operations fail (e.g., `git clone` over SSH, `ssh` commands).
+
+**Solution:**
+
+```bash
+# Verify SSH agent is running on host
+ssh-add -l
+
+# On Linux, check that SSH_AUTH_SOCK is set
+echo $SSH_AUTH_SOCK
+
+# On macOS, ensure Docker Desktop has access to the SSH agent
+# Check Docker Desktop → Settings → General → "Enable default Docker socket"
+
+# Test SSH forwarding inside container
+jailbot --ssh -- ssh-add -l
+
+# Use --verbose to see socket detection details
+jailbot --verbose --ssh -- git clone git@github.com:user/repo.git
 ```
 
 ## License

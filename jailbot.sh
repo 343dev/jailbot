@@ -34,6 +34,7 @@ NL='
 MOUNTED_HOSTS_NL=""
 MOUNT_SPECS_NL=""
 CONTAINER_ARGS_NL=""
+DOCKER_NETWORK=""
 
 # ============================================================================
 # SECTION 1: UTILITY FUNCTIONS
@@ -468,6 +469,11 @@ execute_container() {
     *) set -- "$@" -i ;;
   esac
 
+  # Add network configuration if specified
+  if [ -n "$DOCKER_NETWORK" ]; then
+    set -- "$@" --network "$DOCKER_NETWORK"
+  fi
+
   # Add mounts (evaluated safely)
   if [ -n "$MOUNT_SPECS_NL" ]; then
     while IFS= read -r spec; do
@@ -554,6 +560,8 @@ OPTIONS:
   --verbose         Enable verbose output
   --git             Mount Git configuration files (~/.gitconfig, ~/.config/git/ignore)
   --ssh             Forward SSH agent socket into container
+  --network=NAME    Pass --network to docker run (e.g., "host", "bridge", "none")
+  --network NAME    Pass --network to docker run
   --workdir=PATH    Mount directory directly into container's workdir (/workspace)
   --workdir PATH    Mount directory directly into container's workdir (/workspace)
   --help            Show this help message
@@ -585,6 +593,7 @@ EXAMPLES:
   ${script_name} --verbose -- ls -la
   ${script_name} --git -- git status
   ${script_name} --ssh -- git clone git@github.com:user/repo.git
+  ${script_name} --network=host -- curl http://localhost:8080
   ${script_name} --workdir=. -- bash
   ${script_name} --workdir=/home/user/projects -- myscript.sh
   ${script_name} -- cat ./local-file.txt
@@ -659,6 +668,20 @@ main() {
           log_error "--workdir requires a path argument"
         fi
         handle_mount_only "$1"
+        shift
+        ;;
+
+      --network=*)
+        DOCKER_NETWORK="${arg#--network=}"
+        shift
+        ;;
+
+      --network)
+        shift
+        if [ $# -eq 0 ]; then
+          log_error "--network requires a network name argument"
+        fi
+        DOCKER_NETWORK="$1"
         shift
         ;;
 

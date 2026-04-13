@@ -50,6 +50,7 @@ No manual mounting, no path translation — just run commands naturally as if th
 - **Git Integration** — Optional mounting of `.gitconfig` and global git ignore
 - **Tilde Expansion** — Supports `~/path` notation
 - **Relative Paths** — Handles `./` and `../` paths correctly
+- **Network Configuration** — Pass `--network` to Docker for custom network setup (host, bridge, etc.)
 - **SSH Agent Forwarding** — Forward host SSH agent into container for git/ssh operations
 - **Timezone Sync** — Automatically syncs host timezone to container
 - **Interactive Detection** — Smart TTY detection for interactive shells
@@ -217,6 +218,7 @@ jailbot -- node --version  # Works every time!
 | `--verbose` | Enable detailed logging |
 | `--git` | Mount Git configuration files (readonly) |
 | `--ssh` | Forward SSH agent socket into container |
+| `--network=NAME` | Pass `--network` to `docker run` (e.g., `host`, `bridge`, `none`) |
 | `--workdir=PATH` | Mount directory directly into `/workspace` |
 | `--help` | Show help message |
 
@@ -287,6 +289,19 @@ jailbot --git --ssh -- git push
 
 # Use SSH inside an interactive shell
 jailbot --ssh -- bash
+```
+
+### Network Configuration
+
+```bash
+# Use host network for local service access
+jailbot --network=host -- curl http://localhost:8080
+
+# Combine with other options
+jailbot --network=host --ssh -- git clone git@github.com:user/repo.git
+
+# Use a custom Docker network
+jailbot --network=my-network -- curl http://my-service:3000
 ```
 
 ### Working with Directories

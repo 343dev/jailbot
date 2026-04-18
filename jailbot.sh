@@ -86,7 +86,8 @@ validate_docker() {
 # ============================================================================
 
 cleanup() {
-  :
+  # Restore the original terminal window title
+  printf '\033[23;0t' 2>/dev/null || true
 }
 
 setup_signals() {
@@ -601,6 +602,10 @@ EOF
 }
 
 main() {
+  # Set terminal window title and save the previous one for restoration
+  printf '\033[22;0t' 2>/dev/null || true  # save current title to terminal stack
+  printf '\033]0;jailbot\007'
+
   # Check for --help first, before validation
   case "${1:-}" in
     --help|-h)

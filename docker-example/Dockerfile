@@ -6,6 +6,7 @@ RUN apt-get update \
 	# Things you can't live without
 	git vim curl unzip ca-certificates ffmpeg less fd-find ripgrep shellcheck \
 	python3 python3-pip build-essential pkg-config man-db openssh-client procps \
+	bubblewrap \
 	# Chromium dependencies, required for MCP Playwright to function
 	# libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
 	# libcairo2 libcups2t64 libdbus-1-3 libdrm2 libfontconfig1 libfontenc1 \

@@ -10,7 +10,6 @@ RUN apt-get update \
 	&& python3 -m pip install PyYAML --break-system-packages \
 	&& rm -rf /var/lib/apt/lists/*
 
-COPY --chmod=0755 ./bin/difft ./bin/diff-so-fancy /usr/local/bin/
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/
 
 ENV SHELL=/usr/bin/bash

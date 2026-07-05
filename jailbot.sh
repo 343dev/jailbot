@@ -12,6 +12,7 @@ if [ -n "$CONTAINER_VOLUME" ]; then
   CONTAINER_VOLUME="${CONTAINER_VOLUME}:/root"
 fi
 readonly CONTAINER_VOLUME
+readonly CONTAINER_NAME_PREFIX="${JAILBOT_CONTAINER_NAME_PREFIX:-jailbot}"
 
 # Validate required environment variables
 validate_env() {
@@ -462,7 +463,9 @@ execute_container() {
   interactive_flags="$(detect_interactive_mode)"
 
   # Start building command safely
-  set -- docker run --rm
+  container_name="${CONTAINER_NAME_PREFIX}_$$"
+  log_verbose "Container name: $container_name"
+  set -- docker run --rm --name "$container_name"
 
   # Add interactive flags
   case "$interactive_flags" in
@@ -555,7 +558,8 @@ REQUIRED ENVIRONMENT VARIABLES:
   JAILBOT_IMAGE_NAME      Docker image name (e.g., "debian:trixie-slim")
 
 OPTIONAL ENVIRONMENT VARIABLES:
-  JAILBOT_CONTAINER_VOLUME  Volume name to mount at /root (e.g., "jailbot_root")
+  JAILBOT_CONTAINER_VOLUME    Volume name to mount at /root (e.g., "jailbot_root")
+  JAILBOT_CONTAINER_NAME_PREFIX  Prefix for the random container name (default: "jailbot")
 
 OPTIONS:
   --verbose         Enable verbose output

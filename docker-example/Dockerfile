@@ -1,13 +1,13 @@
-FROM debian:trixie-20260505@sha256:7e0ade45154451d0730a9818e9c4c8721ea4022e7c4dc1e42d44e99c5f4f1d04
+FROM debian:trixie-20260623@sha256:5268cb2ba09b06de9b5c14217d3d023db8a18567635306d05209ae63cb005051
 
 RUN apt-get update \
 	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
 	# Things you can't live without
-	git vim curl unzip ca-certificates ffmpeg less fd-find ripgrep shellcheck \
+	git vim curl unzip ca-certificates less fd-find ripgrep shellcheck \
 	python3 python3-pip build-essential pkg-config man-db openssh-client procps \
-	bubblewrap \
 	&& python3 -m pip install PyYAML --break-system-packages \
+  # Cleaning
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/

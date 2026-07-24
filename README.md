@@ -341,7 +341,7 @@ Jailbot does not write terminal title or other control sequences to command outp
 
 Before `docker run`, Jailbot checks the daemon/current context and verifies that the configured image exists locally. These checks are bounded by `JAILBOT_DOCKER_TIMEOUT_SECONDS` (10 seconds by default). Jailbot never pulls an image automatically; build or pull it explicitly first.
 
-Normal errors distinguish missing Docker, socket permission problems, inaccessible daemon/context, timeout, and a missing local image. `--verbose` includes Docker's captured diagnostic lines on `stderr`; standard output remains reserved for the container command. Diagnostic capture does not print environment variables or credentials.
+Normal successful startup is quiet. Errors distinguish missing Docker, socket permission problems, inaccessible daemon/context, timeout, and a missing local image. `--verbose` reports validation progress and includes Docker's captured diagnostic lines on `stderr`; standard output remains reserved for the container command. Diagnostic capture does not print environment variables or credentials.
 
 ### Debugging
 

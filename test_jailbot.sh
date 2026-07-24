@@ -446,6 +446,22 @@ clear_docker_failure_env() {
     JAILBOT_STUB_IMAGE_SLEEP JAILBOT_STUB_IMAGE_STDERR JAILBOT_STUB_IMAGE_STATUS
 }
 
+test_successful_startup_is_quiet_without_verbose() {
+  run_cli -- echo test
+
+  assert_status 0 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_empty "$STDERR_FILE"
+}
+
+test_verbose_reports_docker_validation_progress() {
+  run_cli --verbose -- echo test
+
+  assert_status 0 || return
+  assert_contains "$STDERR_FILE" '[VERBOSE] Checking Docker daemon and current context' || return
+  assert_contains "$STDERR_FILE" '[VERBOSE] Checking local Docker image: stubimage'
+}
+
 test_daemon_permission_error_is_actionable() {
   JAILBOT_STUB_INFO_STATUS=1
   JAILBOT_STUB_INFO_STDERR='permission denied while trying to connect to the Docker daemon socket'
@@ -939,6 +955,8 @@ main() {
   run_test 'network without a value is rejected before Docker' test_network_without_value_is_rejected_before_docker
   run_test 'network does not consume the separator as a value' test_network_separator_is_not_consumed_as_value
   run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
+  run_test 'successful startup is quiet without verbose' test_successful_startup_is_quiet_without_verbose
+  run_test 'verbose reports Docker validation progress' test_verbose_reports_docker_validation_progress
   run_test 'Docker permission errors are actionable' test_daemon_permission_error_is_actionable
   run_test 'Docker context errors are actionable and verbose' test_docker_context_error_is_actionable_and_verbose
   run_test 'missing local images are actionable' test_missing_local_image_is_actionable

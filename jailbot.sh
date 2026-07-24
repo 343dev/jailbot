@@ -103,12 +103,6 @@ run_with_timeout() {
   return "$command_status"
 }
 
-log_interactive_status() {
-  if [ -t 2 ]; then
-    printf '%s\n' "$*" >&2
-  fi
-}
-
 log_docker_detail() {
   detail_file="$1"
   if [ "$VERBOSE" = true ] && [ -s "$detail_file" ]; then
@@ -128,7 +122,6 @@ validate_docker() {
   DOCKER_DETAIL_FILE="$(mktemp "${TMPDIR:-/tmp}/jailbot-docker.XXXXXX")" ||
     log_error "Could not create temporary storage for Docker diagnostics"
 
-  log_interactive_status "Checking Docker daemon and current context..."
   log_verbose "Checking Docker daemon and current context"
   if run_with_timeout "$DOCKER_TIMEOUT_SECONDS" "$DOCKER_DETAIL_FILE" docker info; then
     daemon_status=0
@@ -147,7 +140,6 @@ validate_docker() {
   fi
 
   : > "$DOCKER_DETAIL_FILE"
-  log_interactive_status "Checking local Docker image $IMAGE_NAME..."
   log_verbose "Checking local Docker image: $IMAGE_NAME"
   if run_with_timeout "$DOCKER_TIMEOUT_SECONDS" "$DOCKER_DETAIL_FILE" docker image inspect "$IMAGE_NAME"; then
     image_status=0

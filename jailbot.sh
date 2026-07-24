@@ -35,8 +35,9 @@ MOUNT_SSH=false
 # Note: paths containing literal newlines are not supported.
 NL='
 '
-MOUNTED_HOSTS_NL=""
 MOUNT_SPECS_NL=""
+MOUNT_RECORDS_DIR=""
+MOUNT_RECORDS_COUNT=0
 CONTAINER_ARGS_DIR=""
 CONTAINER_ARGS_COUNT=0
 DOCKER_NETWORK=""
@@ -93,6 +94,9 @@ validate_docker() {
 cleanup() {
   if [ -n "$CONTAINER_ARGS_DIR" ]; then
     rm -rf "$CONTAINER_ARGS_DIR" || true
+  fi
+  if [ -n "$MOUNT_RECORDS_DIR" ]; then
+    rm -rf "$MOUNT_RECORDS_DIR" || true
   fi
 }
 
@@ -195,8 +199,9 @@ is_path_argument() {
 # ============================================================================
 
 init_mount_tracking() {
-  MOUNTED_HOSTS_NL=""
   MOUNT_SPECS_NL=""
+  MOUNT_RECORDS_DIR=""
+  MOUNT_RECORDS_COUNT=0
   CONTAINER_ARGS_DIR=""
   CONTAINER_ARGS_COUNT=0
   log_verbose "Initialized mount and argument tracking"
@@ -223,23 +228,59 @@ add_container_arg() {
   fi
 }
 
-is_already_mounted() {
-  search_path="${1:-}"
-  if [ -z "$search_path" ]; then
-    return 1
-  fi
+read_file_exact() {
+  input_file="$1"
+  value="$(cat "$input_file"; printf x)"
+  printf '%s' "${value%x}"
+}
 
-  if [ -z "$MOUNTED_HOSTS_NL" ]; then
-    return 1
-  fi
-
-  if grep -Fxq -- "$search_path" <<EOF
-$MOUNTED_HOSTS_NL
-EOF
-  then
-    return 0
-  fi
+find_mount_by_host() {
+  search_path="$1"
+  FOUND_MOUNT_TARGET=""
+  record_index=1
+  while [ "$record_index" -le "$MOUNT_RECORDS_COUNT" ]; do
+    host_file=$(printf '%s/host.%06d' "$MOUNT_RECORDS_DIR" "$record_index")
+    target_file=$(printf '%s/target.%06d' "$MOUNT_RECORDS_DIR" "$record_index")
+    recorded_host=$(read_file_exact "$host_file")
+    if [ "$recorded_host" = "$search_path" ]; then
+      FOUND_MOUNT_TARGET=$(read_file_exact "$target_file")
+      return 0
+    fi
+    record_index=$((record_index + 1))
+  done
   return 1
+}
+
+find_mount_by_target() {
+  search_target="$1"
+  FOUND_MOUNT_HOST=""
+  record_index=1
+  while [ "$record_index" -le "$MOUNT_RECORDS_COUNT" ]; do
+    host_file=$(printf '%s/host.%06d' "$MOUNT_RECORDS_DIR" "$record_index")
+    target_file=$(printf '%s/target.%06d' "$MOUNT_RECORDS_DIR" "$record_index")
+    recorded_target=$(read_file_exact "$target_file")
+    if [ "$recorded_target" = "$search_target" ]; then
+      FOUND_MOUNT_HOST=$(read_file_exact "$host_file")
+      return 0
+    fi
+    record_index=$((record_index + 1))
+  done
+  return 1
+}
+
+record_mount() {
+  if [ -z "$MOUNT_RECORDS_DIR" ]; then
+    MOUNT_RECORDS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jailbot-mounts.XXXXXX")" ||
+      log_error "Could not create temporary storage for mount planning"
+  fi
+
+  MOUNT_RECORDS_COUNT=$((MOUNT_RECORDS_COUNT + 1))
+  host_file=$(printf '%s/host.%06d' "$MOUNT_RECORDS_DIR" "$MOUNT_RECORDS_COUNT")
+  target_file=$(printf '%s/target.%06d' "$MOUNT_RECORDS_DIR" "$MOUNT_RECORDS_COUNT")
+  if ! printf '%s' "$host_path" > "$host_file" ||
+    ! printf '%s' "$container_path" > "$target_file"; then
+    log_error "Could not record mount plan for: $host_path"
+  fi
 }
 
 add_mount() {
@@ -259,41 +300,35 @@ add_mount() {
       ;;
   esac
 
-  # Check if already mounted
-  if is_already_mounted "$host_path"; then
-    log_verbose "Path already mounted: $host_path"
-    return 1
-  fi
-
   case "$host_path" in
     *"$NL"*)
-      log_warning "Skipping mount with newline in path (unsupported): $host_path"
-      return 1
+      log_error "Cannot automatically mount path containing a newline: $host_path"
+      ;;
+    *,*)
+      log_error "Cannot automatically mount path containing a comma: $host_path"
       ;;
   esac
 
   case "$container_path" in
     *"$NL"*)
-      log_warning "Skipping mount with newline in path (unsupported): $host_path"
-      return 1
+      log_error "Cannot use mount target containing a newline: $container_path"
+      ;;
+    *,*)
+      log_error "Cannot use mount target containing a comma: $container_path"
       ;;
   esac
 
-  # Record mount (newline-delimited list)
-  if [ -z "$MOUNTED_HOSTS_NL" ]; then
-    MOUNTED_HOSTS_NL="$host_path"
-  else
-    MOUNTED_HOSTS_NL="${MOUNTED_HOSTS_NL}${NL}${host_path}"
+  if find_mount_by_host "$host_path"; then
+    if [ "$FOUND_MOUNT_TARGET" != "$container_path" ]; then
+      log_error "Host path already planned for a different mount target: $host_path"
+    fi
+    log_verbose "Reusing mount: $host_path -> $container_path"
+    return 0
   fi
 
-  # Docker's --mount parser uses commas as separators; paths containing commas
-  # are not reliably representable.
-  case "${host_path}${container_path}" in
-    *,*)
-      log_warning "Skipping mount (comma in path unsupported by docker --mount): $host_path"
-      return 1
-      ;;
-  esac
+  if find_mount_by_target "$container_path"; then
+    log_error "Mount target collision: $container_path is already used by $FOUND_MOUNT_HOST; cannot also mount $host_path"
+  fi
 
   if [ "$readonly_flag" = "readonly" ]; then
     spec="type=bind,source=$host_path,target=$container_path,readonly"
@@ -306,6 +341,7 @@ add_mount() {
   else
     MOUNT_SPECS_NL="${MOUNT_SPECS_NL}${NL}${spec}"
   fi
+  record_mount
   log_verbose "Added mount: $host_path -> $container_path"
   return 0
 }
@@ -416,26 +452,22 @@ handle_path_argument() {
   fi
 
   if [ -f "$abs_path" ]; then
-    # Mount parent directory for files
+    # Mount parent directory for files.
     parent_dir="$(dirname "$abs_path")"
     parent_container="$(get_container_path "$parent_dir")"
+    add_mount "$parent_dir" "$parent_container"
 
-    add_mount "$parent_dir" "$parent_container" || true
-
-    # Use container path for the file
     file_path="$parent_container/$(basename "$abs_path")"
     add_container_arg "$file_path"
     log_verbose "Mapped file: $abs_path -> $file_path"
 
   elif [ -d "$abs_path" ]; then
-    # Mount directory directly
     container_path="$(get_container_path "$abs_path")"
-    if add_mount "$abs_path" "$container_path"; then
-      add_container_arg "$container_path"
-      log_verbose "Mapped directory: $abs_path -> $container_path"
-    else
-      add_container_arg "$arg"
-    fi
+    add_mount "$abs_path" "$container_path"
+    add_container_arg "$container_path"
+    log_verbose "Mapped directory: $abs_path -> $container_path"
+  else
+    log_error "Cannot automatically mount unsupported path type: $abs_path"
   fi
 }
 
@@ -598,6 +630,7 @@ Invocation:
   Options before -- belong to Jailbot. Everything after -- is the container
   command. The separator is consumed and is not passed after the Docker image.
   Existing host paths after -- are mounted and translated to container paths.
+  Mount target collisions and comma/newline paths are rejected before Docker.
   Prefix a path with a backslash to pass it without mounting. Empty arguments
   are preserved; arguments containing literal newlines are rejected.
 

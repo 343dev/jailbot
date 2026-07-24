@@ -477,6 +477,104 @@ test_ordinary_command_has_complete_docker_argv() {
   assert_run_args "$@"
 }
 
+test_repeated_directory_uses_one_mount_and_one_target() {
+  path_dir="$TEST_ROOT/repeated-project"
+  mkdir -p "$path_dir"
+
+  run_cli -- printf '%s:%s' "$path_dir" "$path_dir"
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  container_dir="/workspace/$(basename "$path_dir")"
+  set -- --rm --name "$container_name" -i \
+    --mount "type=bind,source=$path_dir,target=$container_dir" \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage \
+    printf '%s:%s' "$container_dir" "$container_dir"
+  assert_run_args "$@"
+}
+
+test_colliding_mount_targets_are_rejected_before_docker() {
+  first_dir="$TEST_ROOT/first/project"
+  second_dir="$TEST_ROOT/second/project"
+  mkdir -p "$first_dir" "$second_dir"
+
+  run_cli -- printf '%s:%s' "$first_dir" "$second_dir"
+
+  assert_status 1 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_contains "$STDERR_FILE" 'Mount target collision: /workspace/project' || return
+  assert_contains "$STDERR_FILE" "$first_dir" || return
+  assert_contains "$STDERR_FILE" "$second_dir" || return
+  assert_no_docker_calls
+}
+
+test_comma_path_is_rejected_before_docker() {
+  comma_dir="$TEST_ROOT/project,comma"
+  mkdir -p "$comma_dir"
+
+  run_cli -- cat "$comma_dir"
+
+  assert_status 1 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_contains "$STDERR_FILE" 'Cannot automatically mount path containing a comma' || return
+  assert_contains "$STDERR_FILE" "$comma_dir" || return
+  assert_no_docker_calls
+}
+
+test_workspace_path_is_passed_without_mounting() {
+  workspace_path="$(cd "$(dirname "$SCRIPT")" && pwd)/README.md"
+
+  run_cli -- printf '%s' "$workspace_path"
+
+  assert_status 0 || return
+  assert_contains "$STDERR_FILE" "Skipping container workdir path: $workspace_path" || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage printf '%s' "$workspace_path"
+  assert_run_args "$@"
+}
+
+test_escaped_comma_path_is_passed_without_mounting() {
+  comma_dir="$TEST_ROOT/escaped,comma"
+  mkdir -p "$comma_dir"
+
+  run_cli -- printf '%s' "\\$comma_dir"
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage printf '%s' "$comma_dir"
+  assert_run_args "$@"
+}
+
 test_path_with_spaces_has_exact_mount_and_translation() {
   path_dir="$TEST_ROOT/path with spaces"
   path_file="$path_dir/file name.txt"
@@ -582,6 +680,11 @@ main() {
   run_test 'newline arguments are rejected before Docker' test_newline_argument_is_rejected_before_docker
   run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command
   run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
+  run_test 'repeated directories use one mount and target' test_repeated_directory_uses_one_mount_and_one_target
+  run_test 'colliding mount targets are rejected before Docker' test_colliding_mount_targets_are_rejected_before_docker
+  run_test 'comma paths are rejected before Docker' test_comma_path_is_rejected_before_docker
+  run_test 'workspace paths pass without mounting' test_workspace_path_is_passed_without_mounting
+  run_test 'escaped comma paths pass without mounting' test_escaped_comma_path_is_passed_without_mounting
   run_test 'paths with spaces preserve mount and translated argv' test_path_with_spaces_has_exact_mount_and_translation
   run_test 'persistent volume targets the container home' test_persistent_volume_targets_container_home
   run_test 'entrypoint resolves commands from bashrc PATH' test_entrypoint_loads_path_from_bashrc

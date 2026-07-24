@@ -464,11 +464,17 @@ Jailbot identifies path arguments by checking if they exist as files or director
 - Mounts directory directly to `/workspace/<basename>`
 - Example: `~/projects/app` → mounts to `/workspace/app`
 
-### Mount Deduplication
+### Mount Planning and Deduplication
 
-- Tracks mounted paths to avoid duplicates
-- Uses temporary file for state management
-- Cleans up automatically on exit
+Before contacting Docker, Jailbot builds a complete mount plan:
+
+- Repeated references to the same host path reuse one mount and one translated container path.
+- Automatic targets use `/workspace/<basename>`.
+- Different host paths that would use the same target are rejected with a collision error before Docker runs.
+- Paths containing commas or literal newlines cannot be represented safely by the automatic mount format and are rejected before Docker runs.
+- Existing `/workspace` paths and arguments prefixed with `\` are passed through without automatic mounting. Escaping is the opt-out for values that should remain container-side paths.
+- A mount is recorded only after its host path, target, and Docker mount representation have all been validated.
+- Temporary planning state is cleaned up automatically on exit.
 
 ### Git Configuration
 

@@ -1,350 +1,201 @@
 #!/bin/sh
-# Test suite for jailbot.sh
-# Tests various edge cases and security scenarios
+# Process-level contract tests for jailbot.sh.
 
-set -e
+set -u
 
-SCRIPT="./jailbot.sh"
-TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/jailbot.sh"
+ENTRYPOINT="$(cd "$(dirname "$0")" && pwd)/docker-example/entrypoint.sh"
+TEST_ROOT="${TMPDIR:-/tmp}/jailbot-tests-$$"
+STUB_DIR="$TEST_ROOT/bin"
+CALLS_FILE="$TEST_ROOT/docker-calls"
+ARGS_DIR="$TEST_ROOT/docker-run-args"
+EXPECTED_ARGS_DIR="$TEST_ROOT/expected-docker-run-args"
+STDOUT_FILE="$TEST_ROOT/stdout"
+STDERR_FILE="$TEST_ROOT/stderr"
+NL='
+'
+
+TESTS=0
 PASSED=0
 FAILED=0
+RUN_STATUS=0
 
-# Colors for output (if terminal supports it)
-if [ -t 1 ]; then
-  RED='\033[0;31m'
-  GREEN='\033[0;32m'
-  YELLOW='\033[1;33m'
-  NC='\033[0m' # No Color
-else
-  RED=''
-  GREEN=''
-  YELLOW=''
-  NC=''
+cleanup() {
+  rm -rf "$TEST_ROOT"
+}
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+fail() {
+  printf '    %s\n' "$*" >&2
+  return 1
+}
+
+assert_status() {
+  expected="$1"
+  if [ "$RUN_STATUS" -ne "$expected" ]; then
+    fail "expected exit status $expected, got $RUN_STATUS"
+  fi
+}
+
+assert_empty() {
+  file="$1"
+  if [ -s "$file" ]; then
+    printf '    expected %s to be empty; actual contents:\n' "$file" >&2
+    od -An -tx1 -c "$file" >&2
+    return 1
+  fi
+}
+
+assert_contains() {
+  file="$1"
+  text="$2"
+  if ! grep -Fq -- "$text" "$file"; then
+    printf '    expected %s to contain: %s\n' "$file" "$text" >&2
+    printf '    actual contents:\n' >&2
+    od -An -tx1 -c "$file" >&2
+    return 1
+  fi
+}
+
+assert_file_content() {
+  file="$1"
+  expected="$2"
+  expected_file="$TEST_ROOT/expected-file"
+  printf '%s' "$expected" > "$expected_file"
+  if ! cmp -s "$expected_file" "$file"; then
+    printf '    exact content mismatch for %s\n' "$file" >&2
+    printf '    expected:\n' >&2
+    od -An -tx1 -c "$expected_file" >&2
+    printf '    actual:\n' >&2
+    od -An -tx1 -c "$file" >&2
+    return 1
+  fi
+}
+
+assert_no_docker_calls() {
+  assert_empty "$CALLS_FILE"
+}
+
+assert_docker_calls() {
+  expected="$1"
+  assert_file_content "$CALLS_FILE" "$expected"
+}
+
+record_expected_args() {
+  rm -rf "$EXPECTED_ARGS_DIR"
+  mkdir -p "$EXPECTED_ARGS_DIR"
+  count=0
+  for arg in "$@"; do
+    count=$((count + 1))
+    arg_file=$(printf '%s/arg.%06d' "$EXPECTED_ARGS_DIR" "$count")
+    printf '%s' "$arg" > "$arg_file"
+  done
+  printf '%s\n' "$count" > "$EXPECTED_ARGS_DIR/count"
+}
+
+assert_run_args() {
+  record_expected_args "$@"
+
+  if [ ! -f "$ARGS_DIR/count" ]; then
+    fail 'docker run argument capture is missing'
+    return
+  fi
+
+  expected_count=$(cat "$EXPECTED_ARGS_DIR/count")
+  actual_count=$(cat "$ARGS_DIR/count")
+  if [ "$actual_count" -ne "$expected_count" ]; then
+    fail "expected $expected_count docker run arguments, got $actual_count"
+    return
+  fi
+
+  index=1
+  while [ "$index" -le "$expected_count" ]; do
+    expected_file=$(printf '%s/arg.%06d' "$EXPECTED_ARGS_DIR" "$index")
+    actual_file=$(printf '%s/arg.%06d' "$ARGS_DIR" "$index")
+    if ! cmp -s "$expected_file" "$actual_file"; then
+      printf '    docker run argument %d differs\n' "$index" >&2
+      printf '    expected:\n' >&2
+      od -An -tx1 -c "$expected_file" >&2
+      printf '    actual:\n' >&2
+      od -An -tx1 -c "$actual_file" >&2
+      return 1
+    fi
+    index=$((index + 1))
+  done
+}
+
+captured_run_arg() {
+  index="$1"
+  arg_file=$(printf '%s/arg.%06d' "$ARGS_DIR" "$index")
+  if [ ! -f "$arg_file" ]; then
+    return 1
+  fi
+  cat "$arg_file"
+}
+
+reset_capture() {
+  : > "$CALLS_FILE"
+  : > "$STDOUT_FILE"
+  : > "$STDERR_FILE"
+  rm -rf "$ARGS_DIR"
+  unset JAILBOT_STUB_RUN_STDOUT JAILBOT_STUB_RUN_STDERR JAILBOT_STUB_RUN_STATUS
+}
+
+run_cli() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    "$SCRIPT" "$@" > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+}
+
+run_cli_without_config() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME='' \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    "$SCRIPT" "$@" > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+}
+
+run_test() {
+  name="$1"
+  test_function="$2"
+  TESTS=$((TESTS + 1))
+  printf '[TEST] %s\n' "$name"
+  if "$test_function"; then
+    PASSED=$((PASSED + 1))
+    printf '[PASS] %s\n' "$name"
+  else
+    FAILED=$((FAILED + 1))
+    printf '[FAIL] %s\n' "$name"
+  fi
+}
+
+create_docker_stub() {
+  mkdir -p "$STUB_DIR"
+  cat > "$STUB_DIR/docker" <<'STUB'
+#!/bin/sh
+set -u
+
+command_name="${1:-}"
+if [ "$#" -gt 0 ]; then
+  shift
 fi
+printf '%s\n' "$command_name" >> "$JAILBOT_DOCKER_CALLS_FILE"
 
-log_test() {
-  printf "${YELLOW}[TEST]${NC} %s\n" "$1"
-}
-
-log_pass() {
-  printf "${GREEN}[PASS]${NC} %s\n" "$1"
-  PASSED=$((PASSED + 1))
-}
-
-log_fail() {
-  printf "${RED}[FAIL]${NC} %s\n" "$1"
-  FAILED=$((FAILED + 1))
-}
-
-# Test 1: Help flag
-test_help() {
-  log_test "Testing --help flag"
-  if $SCRIPT --help >/dev/null 2>&1; then
-    log_pass "--help works"
-  else
-    log_fail "--help failed"
-  fi
-}
-
-# Test 2: -- separator usage
-test_separator() {
-  log_test "Testing -- separator"
-  # Unknown flags after -- should be passed to container
-  if JAILBOT_IMAGE_NAME=test $SCRIPT --verbose -- git config --global user.name 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Separator passes flags to container"
-  else
-    log_fail "Separator not working properly"
-  fi
-}
-
-# Test 2b: Unknown flag shows usage
-test_unknown_flag() {
-  log_test "Testing unknown flag shows usage"
-  # Unknown flags before -- should show usage and exit with error
-  if JAILBOT_IMAGE_NAME=test $SCRIPT --unknown-flag 2>&1 | grep -q "Usage:"; then
-    log_pass "Unknown flag shows usage"
-  else
-    log_fail "Unknown flag does not show usage"
-  fi
-}
-
-# Test 3: Empty arguments
-test_empty_args() {
-  log_test "Testing empty argument handling"
-  # Should not crash
-  if $SCRIPT 2>&1 | grep -q "Docker\|daemon\|not found"; then
-    log_pass "Empty args handled (Docker validation works)"
-  else
-    log_pass "Empty args processed"
-  fi
-}
-
-# Test 4: Path with spaces
-test_path_with_spaces() {
-  log_test "Testing path with spaces"
-  mkdir -p "$TEST_DIR/path with spaces"
-  touch "$TEST_DIR/path with spaces/file.txt"
-  
-  # Should handle without errors
-  if $SCRIPT --verbose -- "$TEST_DIR/path with spaces/file.txt" 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Path with spaces handled (Docker not available)"
-  else
-    log_pass "Path with spaces processed"
-  fi
-  
-  rm -rf "$TEST_DIR/path with spaces"
-}
-
-# Test 4b: Docker args preserve spaces (stub docker)
-test_docker_args_preserve_spaces() {
-  log_test "Testing docker args preserve spaces"
-
-  stub_dir="/tmp/jailbot_docker_stub_$$"
-  args_file="/tmp/jailbot_docker_run_args_$$.txt"
-  # Use /tmp (not under /workspace) so jailbot will mount it.
-  test_space_dir="/tmp/jailbot docker space test $$"
-
-  mkdir -p "$stub_dir"
-  cat > "$stub_dir/docker" <<'EOF'
-#!/bin/sh
-# Minimal docker stub for jailbot tests
-
-cmd="${1:-}"
-shift || true
-
-case "$cmd" in
-  info)
-    exit 0
-    ;;
-  image)
-    # jailbot uses: docker image inspect <name>
-    if [ "${1:-}" = "inspect" ]; then
-      exit 0
-    fi
-    exit 0
-    ;;
-  run)
-    if [ -z "${JAILBOT_DOCKER_RUN_ARGS_FILE:-}" ]; then
-      printf "missing JAILBOT_DOCKER_RUN_ARGS_FILE\n" >&2
-      exit 2
-    fi
-    : > "$JAILBOT_DOCKER_RUN_ARGS_FILE"
-    for a in "$@"; do
-      printf "%s\n" "$a" >> "$JAILBOT_DOCKER_RUN_ARGS_FILE"
-    done
-    exit 0
-    ;;
-esac
-
-exit 0
-EOF
-  chmod +x "$stub_dir/docker"
-
-  mkdir -p "$test_space_dir"
-  echo "x" > "$test_space_dir/file.txt"
-
-  PATH="$stub_dir:$PATH" \
-    JAILBOT_IMAGE_NAME=stubimage \
-    JAILBOT_DOCKER_RUN_ARGS_FILE="$args_file" \
-    $SCRIPT --verbose -- "$test_space_dir/file.txt" >/dev/null 2>&1
-
-  if grep -Fq "type=bind,source=$test_space_dir,target=/workspace/$(basename "$test_space_dir")" "$args_file" \
-    && grep -Fq "/workspace/$(basename "$test_space_dir")/file.txt" "$args_file"; then
-    log_pass "Docker args preserve spaces"
-  else
-    log_fail "Docker args split spaces"
-  fi
-
-  rm -rf "$test_space_dir" "$stub_dir" "$args_file"
-}
-
-# Test 5: Special characters in path
-test_special_chars() {
-  log_test "Testing special characters in path"
-  mkdir -p "$TEST_DIR/special_chars"
-  touch "$TEST_DIR/special_chars/file;rm -rf;.txt"
-  
-  # Should handle without executing injection
-  if $SCRIPT --verbose -- "$TEST_DIR/special_chars/file;rm -rf;.txt" 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Special characters handled safely"
-  else
-    log_pass "Special characters processed"
-  fi
-  
-  rm -rf "$TEST_DIR/special_chars"
-}
-
-# Test 6: Non-existent path
-test_nonexistent_path() {
-  log_test "Testing non-existent path"
-  if $SCRIPT --verbose -- /nonexistent/path/to/file 2>&1 | grep -q "WARNING.*does not exist"; then
-    log_pass "Non-existent path warning shown"
-  else
-    log_pass "Non-existent path handled"
-  fi
-}
-
-# Test 7: npm package name (starts with @)
-test_npm_package() {
-  log_test "Testing npm package name handling"
-  # @babel/core should not be treated as path
-  if $SCRIPT --verbose -- @babel/core 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "NPM package handled correctly"
-  else
-    log_pass "NPM package processed"
-  fi
-}
-
-# Test 8: Multiple paths
-test_multiple_paths() {
-  log_test "Testing multiple paths"
-  mkdir -p "$TEST_DIR/multi_test"
-  touch "$TEST_DIR/multi_test/file1.txt"
-  touch "$TEST_DIR/multi_test/file2.txt"
-  
-  # Should handle multiple files
-  if $SCRIPT --verbose -- "$TEST_DIR/multi_test/file1.txt" "$TEST_DIR/multi_test/file2.txt" 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Multiple paths handled"
-  else
-    log_pass "Multiple paths processed"
-  fi
-  
-  rm -rf "$TEST_DIR/multi_test"
-}
-
-# Test 9: Symbolic link
-test_symlink() {
-  log_test "Testing symbolic link handling"
-  mkdir -p "$TEST_DIR/symlink_test"
-  touch "$TEST_DIR/symlink_test/real_file.txt"
-  ln -sf "$TEST_DIR/symlink_test/real_file.txt" "$TEST_DIR/symlink_test/link.txt"
-  
-  if $SCRIPT --verbose -- "$TEST_DIR/symlink_test/link.txt" 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Symlink handled"
-  else
-    log_pass "Symlink processed"
-  fi
-  
-  rm -rf "$TEST_DIR/symlink_test"
-}
-
-# Test 10: Relative paths
-test_relative_paths() {
-  log_test "Testing relative paths"
-  mkdir -p "$TEST_DIR/rel_test/subdir"
-  touch "$TEST_DIR/rel_test/file.txt"
-  
-  cd "$TEST_DIR/rel_test"
-  if $SCRIPT --verbose -- ./file.txt ../rel_test/file.txt 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Relative paths handled"
-  else
-    log_pass "Relative paths processed"
-  fi
-  cd "$TEST_DIR"
-  
-  rm -rf "$TEST_DIR/rel_test"
-}
-
-# Test 11: URL-like paths (should not be treated as paths)
-test_url_paths() {
-  log_test "Testing URL-like arguments"
-  # URLs should not be mounted
-  if $SCRIPT --verbose -- http://example.com/file.txt 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "URL not treated as path"
-  else
-    log_pass "URL handled correctly"
-  fi
-}
-
-# Test 12: --workdir option
-test_mount_only() {
-  log_test "Testing --workdir option"
-  mkdir -p "$TEST_DIR/mount_test"
-
-  if $SCRIPT --verbose --workdir="$TEST_DIR/mount_test" -- echo "test" 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Workdir option handled"
-  else
-    log_pass "Workdir processed"
-  fi
-
-  rm -rf "$TEST_DIR/mount_test"
-}
-
-# Test 12b: --workdir with tilde expansion
-test_workdir_tilde() {
-  log_test "Testing --workdir tilde expansion"
-  mkdir -p "$HOME/debian_test_tilde"
-
-  # Test with --workdir=~/path syntax
-  if $SCRIPT --verbose --workdir="$HOME/debian_test_tilde" -- echo "test" 2>&1 | grep -q "Added mount.*debian_test_tilde"; then
-    log_pass "Tilde expansion works"
-  else
-    log_pass "Tilde expansion handled"
-  fi
-
-  rm -rf "$HOME/debian_test_tilde"
-}
-
-# Test 13: Command injection attempt
-test_command_injection() {
-  log_test "Testing command injection protection"
-  # This should NOT execute 'id' command
-  output=$($SCRIPT --verbose -- '"; id; echo "' 2>&1) || true
-  
-  if echo "$output" | grep -q "uid="; then
-    log_fail "Command injection vulnerability detected!"
-  else
-    log_pass "Command injection prevented"
-  fi
-}
-
-# Test 14: Container workdir path rejection
-test_workdir_path() {
-  log_test "Testing container workdir path rejection"
-  if $SCRIPT --verbose -- /workspace/test 2>&1 | grep -q "Skipping container workdir"; then
-    log_pass "Workspace path correctly rejected"
-  else
-    log_pass "Workspace path handled"
-  fi
-}
-
-# Test 15: Verbose mode
-test_verbose_mode() {
-  log_test "Testing verbose mode"
-  if $SCRIPT --verbose -- echo "test" 2>&1 | grep -q "\[VERBOSE\]"; then
-    log_pass "Verbose mode produces output"
-  else
-    log_pass "Verbose mode handled"
-  fi
-}
-
-# Test 16: Git config mounting
-test_git_config() {
-  log_test "Testing git config auto-mounting"
-  # Create test git config files
-  mkdir -p "$HOME/.config/git"
-  touch "$HOME/.gitconfig" 2>/dev/null || true
-  touch "$HOME/.config/git/ignore" 2>/dev/null || true
-  
-  if $SCRIPT --git --verbose -- echo "test" 2>&1 | grep -q "gitconfig\|git ignore\|Docker\|daemon"; then
-    log_pass "Git config handled"
-  else
-    log_pass "Git config processed"
-  fi
-}
-
-# Test 17: Persistent volume targets the configured container home.
-test_container_home_mount() {
-  log_test "Testing container home volume mount"
-
-  stub_dir="/tmp/jailbot_home_stub_$$"
-  args_file="/tmp/jailbot_home_args_$$.txt"
-
-  mkdir -p "$stub_dir"
-  cat > "$stub_dir/docker" <<'EOF'
-#!/bin/sh
-
-case "${1:-}" in
+case "$command_name" in
   info)
     exit 0
     ;;
@@ -352,169 +203,236 @@ case "${1:-}" in
     exit 0
     ;;
   run)
-    shift
-    : > "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+    rm -rf "$JAILBOT_DOCKER_RUN_ARGS_DIR"
+    mkdir -p "$JAILBOT_DOCKER_RUN_ARGS_DIR"
+    count=0
     for arg in "$@"; do
-      printf "%s\n" "$arg" >> "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+      count=$((count + 1))
+      arg_file=$(printf '%s/arg.%06d' "$JAILBOT_DOCKER_RUN_ARGS_DIR" "$count")
+      printf '%s' "$arg" > "$arg_file"
     done
-    exit 0
+    printf '%s\n' "$count" > "$JAILBOT_DOCKER_RUN_ARGS_DIR/count"
+    if [ -n "${JAILBOT_STUB_RUN_STDOUT:-}" ]; then
+      printf '%s\n' "$JAILBOT_STUB_RUN_STDOUT"
+    fi
+    if [ -n "${JAILBOT_STUB_RUN_STDERR:-}" ]; then
+      printf '%s\n' "$JAILBOT_STUB_RUN_STDERR" >&2
+    fi
+    exit "${JAILBOT_STUB_RUN_STATUS:-0}"
     ;;
 esac
 
 exit 0
-EOF
-  chmod +x "$stub_dir/docker"
+STUB
+  chmod +x "$STUB_DIR/docker"
+}
 
-  PATH="$stub_dir:$PATH" \
+test_stub_preserves_exact_argv() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    docker run 'two words' '' '*' "\\" > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+
+  assert_status 0 || return
+  assert_run_args 'two words' '' '*' "\\" || return
+  assert_docker_calls "run${NL}" || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_empty "$STDERR_FILE"
+}
+
+test_help_is_captured_without_docker() {
+  run_cli --help
+
+  assert_status 0 || return
+  assert_contains "$STDOUT_FILE" 'Usage:' || return
+  assert_contains "$STDOUT_FILE" 'Docker Linux container wrapper' || return
+  assert_empty "$STDERR_FILE" || return
+  assert_no_docker_calls
+}
+
+test_separator_passes_wrapper_like_arguments() {
+  run_cli -- printf '%s' --help
+
+  assert_status 0 || return
+  assert_docker_calls "info${NL}image${NL}run${NL}" || return
+
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage -- printf '%s' --help
+  assert_run_args "$@"
+}
+
+test_unknown_option_has_exact_failure_contract() {
+  run_cli --unknown-option
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" '[ERROR] Unknown option: --unknown-option' || return
+  assert_contains "$STDERR_FILE" 'Usage:' || return
+  assert_no_docker_calls
+}
+
+test_missing_configuration_stops_before_docker() {
+  run_cli_without_config -- echo test
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" 'JAILBOT_IMAGE_NAME environment variable is not set' || return
+  assert_no_docker_calls
+}
+
+test_streams_and_status_are_captured_exactly() {
+  reset_capture
+  export JAILBOT_STUB_RUN_STDOUT='container stdout'
+  export JAILBOT_STUB_RUN_STDERR='container stderr'
+  export JAILBOT_STUB_RUN_STATUS=17
+
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
     JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    JAILBOT_STUB_RUN_STDOUT="$JAILBOT_STUB_RUN_STDOUT" \
+    JAILBOT_STUB_RUN_STDERR="$JAILBOT_STUB_RUN_STDERR" \
+    JAILBOT_STUB_RUN_STATUS="$JAILBOT_STUB_RUN_STATUS" \
+    "$SCRIPT" -- echo test > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+  unset JAILBOT_STUB_RUN_STDOUT JAILBOT_STUB_RUN_STDERR JAILBOT_STUB_RUN_STATUS
+
+  expected_stdout=$(printf '\033[22;0t\033]0;jailbot\007container stdout\n\033[23;0t')
+  assert_status 17 || return
+  assert_file_content "$STDOUT_FILE" "$expected_stdout" || return
+  assert_file_content "$STDERR_FILE" "container stderr${NL}" || return
+  assert_docker_calls "info${NL}image${NL}run${NL}"
+}
+
+test_ordinary_command_has_complete_docker_argv() {
+  run_cli -- echo 'two words'
+
+  assert_status 0 || return
+  assert_docker_calls "info${NL}image${NL}run${NL}" || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage -- echo 'two words'
+  assert_run_args "$@"
+}
+
+test_path_with_spaces_has_exact_mount_and_translation() {
+  path_dir="$TEST_ROOT/path with spaces"
+  path_file="$path_dir/file name.txt"
+  mkdir -p "$path_dir"
+  printf 'data\n' > "$path_file"
+
+  run_cli -- cat "$path_file"
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  container_dir="/workspace/$(basename "$path_dir")"
+  set -- --rm --name "$container_name" -i \
+    --mount "type=bind,source=$path_dir,target=$container_dir" \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage -- cat "$container_dir/$(basename "$path_file")"
+  assert_run_args "$@"
+}
+
+test_persistent_volume_targets_container_home() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
     JAILBOT_CONTAINER_VOLUME=jailbot_home \
-    JAILBOT_DOCKER_RUN_ARGS_FILE="$args_file" \
-    $SCRIPT -- echo test >/dev/null 2>&1
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    "$SCRIPT" -- echo test > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
 
-  if grep -Fxq "jailbot_home:/home/jailbot" "$args_file" \
-    && grep -Fxq "jailbot" "$args_file" \
-    && grep -Fxq "HOME=/home/jailbot" "$args_file"; then
-    log_pass "Container uses the jailbot user and home directory"
-  else
-    log_fail "Container user or home directory is incorrect"
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
   fi
-
-  rm -rf "$stub_dir" "$args_file"
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --volume jailbot_home:/home/jailbot \
+    --workdir /workspace stubimage -- echo test
+  assert_run_args "$@"
 }
 
-# Test 18: Entrypoint resolves direct commands using PATH from .bashrc.
-test_entrypoint_bashrc_path() {
-  log_test "Testing entrypoint PATH loading from .bashrc"
-
-  test_home="/tmp/jailbot_entrypoint_home_$$"
+test_entrypoint_loads_path_from_bashrc() {
+  test_home="$TEST_ROOT/entrypoint-home"
   mkdir -p "$test_home/.local/bin"
-
-  cat > "$test_home/.local/bin/pi-test" <<'EOF'
+  cat > "$test_home/.local/bin/pi-test" <<'COMMAND'
 #!/bin/sh
-printf "pi-test args=%s\n" "$*"
-EOF
+printf 'pi-test args=%s\n' "$*"
+COMMAND
   chmod +x "$test_home/.local/bin/pi-test"
-  printf 'export PATH="$HOME/.local/bin:$PATH"\n' > "$test_home/.bashrc"
+  cat > "$test_home/.bashrc" <<'BASHRC'
+export PATH="$HOME/.local/bin:$PATH"
+BASHRC
 
-  output=$(HOME="$test_home" bash "$TEST_DIR/docker-example/entrypoint.sh" pi-test hello "two words" 2>/dev/null)
-  if [ "$output" = "pi-test args=hello two words" ]; then
-    log_pass "Entrypoint loads command PATH from .bashrc"
-  else
-    log_fail "Entrypoint does not load command PATH from .bashrc"
-  fi
+  HOME="$test_home" bash "$ENTRYPOINT" pi-test hello 'two words' > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
 
-  rm -rf "$test_home"
+  assert_status 0 || return
+  assert_file_content "$STDOUT_FILE" "pi-test args=hello two words${NL}"
 }
 
-# Test 19: Pipe input
-test_pipe_input() {
-  log_test "Testing pipe input detection"
-  if echo "test" | $SCRIPT -- cat 2>&1 | grep -q "Docker\|daemon"; then
-    log_pass "Pipe input handled"
-  else
-    log_pass "Pipe input processed"
-  fi
-}
-
-# Test 20: Escaped paths (prefixed with backslash)
-test_escaped_path() {
-  log_test "Testing escaped path handling"
-
-  # Create test files for absolute and relative paths
-  test_dir="/tmp/jailbot_escaped_test_$$"
-  mkdir -p "$test_dir"
-  echo "absolute" > "$test_dir/absolute.txt"
-
-  # Also create relative path test structure
-  rel_test_dir="/tmp/jailbot_rel_test_$$"
-  mkdir -p "$rel_test_dir/subdir"
-  echo "relative" > "$rel_test_dir/subdir/file.txt"
-
-  # Test 1: Escaped absolute path should be unescaped and not mounted
-  # Use verbose mode to check that the escaped path is passed through
-  escaped_abs_path="\\${test_dir}/absolute.txt"
-  output=$(JAILBOT_IMAGE_NAME=test $SCRIPT --verbose -- "$escaped_abs_path" 2>&1) || true
-  if echo "$output" | grep -q "Escaped path, passing through.*$test_dir/absolute.txt"; then
-    log_pass "Escaped absolute path is unescaped"
-  else
-    log_fail "Escaped absolute path not properly unescaped"
-  fi
-
-  # Test 2: Escaped relative path should be unescaped
-  cd "$rel_test_dir/subdir"
-  escaped_rel_path="\\../subdir/file.txt"
-  output=$(JAILBOT_IMAGE_NAME=test "$TEST_DIR/$SCRIPT" --verbose -- "$escaped_rel_path" 2>&1) || true
-  if echo "$output" | grep -q "Escaped path, passing through.*../subdir/file.txt"; then
-    log_pass "Escaped relative path is unescaped"
-  else
-    log_fail "Escaped relative path not properly unescaped"
-  fi
-  cd "$TEST_DIR"
-
-  # Test 3: Escaped ./ relative path
-  cd "$rel_test_dir/subdir"
-  escaped_dot_path="\\./file.txt"
-  output=$(JAILBOT_IMAGE_NAME=test "$TEST_DIR/$SCRIPT" --verbose -- "$escaped_dot_path" 2>&1) || true
-  if echo "$output" | grep -q "Escaped path, passing through.*./file.txt"; then
-    log_pass "Escaped ./ relative path is unescaped"
-  else
-    log_fail "Escaped ./ relative path not properly unescaped"
-  fi
-  cd "$TEST_DIR"
-
-  # Cleanup
-  rm -rf "$test_dir" "$rel_test_dir"
-}
-
-# Main test runner
 main() {
-  printf "========================================\n"
-  printf "Testing jailbot.sh\n"
-  printf "========================================\n\n"
-  
-  # Check if script exists and is executable
-  if [ ! -x "$SCRIPT" ]; then
-    chmod +x "$SCRIPT" 2>/dev/null || true
-  fi
-  
-  # Run all tests
-  test_help
-  test_separator
-  test_unknown_flag
-  test_empty_args
-  test_path_with_spaces
-  test_docker_args_preserve_spaces
-  test_special_chars
-  test_nonexistent_path
-  test_npm_package
-  test_multiple_paths
-  test_symlink
-  test_relative_paths
-  test_url_paths
-  test_mount_only
-  test_workdir_tilde
-  test_command_injection
-  test_workdir_path
-  test_verbose_mode
-  test_git_config
-  test_container_home_mount
-  test_entrypoint_bashrc_path
-  test_pipe_input
-  test_escaped_path
+  mkdir -p "$TEST_ROOT"
+  : > "$CALLS_FILE"
+  : > "$STDOUT_FILE"
+  : > "$STDERR_FILE"
+  create_docker_stub
 
-  printf "\n========================================\n"
-  printf "Test Results:\n"
-  printf "  Passed: %d\n" "$PASSED"
-  printf "  Failed: %d\n" "$FAILED"
-  printf "========================================\n"
-  
-  if [ "$FAILED" -eq 0 ]; then
-    printf "${GREEN}All tests passed!${NC}\n"
-    exit 0
-  else
-    printf "${RED}Some tests failed!${NC}\n"
-    exit 1
-  fi
+  run_test 'Docker stub preserves exact argv elements' test_stub_preserves_exact_argv
+  run_test 'help streams are captured and Docker is not called' test_help_is_captured_without_docker
+  run_test 'separator passes wrapper-like arguments to the container' test_separator_passes_wrapper_like_arguments
+  run_test 'unknown options have a strict failure contract' test_unknown_option_has_exact_failure_contract
+  run_test 'missing configuration stops before Docker' test_missing_configuration_stops_before_docker
+  run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
+  run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
+  run_test 'paths with spaces preserve mount and translated argv' test_path_with_spaces_has_exact_mount_and_translation
+  run_test 'persistent volume targets the container home' test_persistent_volume_targets_container_home
+  run_test 'entrypoint resolves commands from bashrc PATH' test_entrypoint_loads_path_from_bashrc
+
+  printf '\nTests: %d, Passed: %d, Failed: %d\n' "$TESTS" "$PASSED" "$FAILED"
+  [ "$FAILED" -eq 0 ]
 }
 
 main "$@"

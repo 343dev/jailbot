@@ -224,6 +224,10 @@ case "$command_name" in
     exit "${JAILBOT_STUB_IMAGE_STATUS:-0}"
     ;;
   run)
+    if [ "${JAILBOT_STUB_REQUIRE_TTY_STDIN:-}" = true ] && [ ! -t 0 ]; then
+      printf 'docker run did not inherit TTY stdin\n' >&2
+      exit 125
+    fi
     rm -rf "$JAILBOT_DOCKER_RUN_ARGS_DIR"
     mkdir -p "$JAILBOT_DOCKER_RUN_ARGS_DIR"
     count=0
@@ -620,6 +624,54 @@ test_sigterm_is_forwarded_with_status_143() {
   run_signal_case TERM 143
 }
 
+test_tty_stdin_reaches_docker_run() {
+  tty_result="$TEST_ROOT/tty-result"
+  reset_capture
+  rm -f "$tty_result"
+
+  PATH="$STUB_DIR:$PATH" \
+    TERM=xterm \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    JAILBOT_STUB_REQUIRE_TTY_STDIN=true \
+    JAILBOT_TTY_RESULT_FILE="$tty_result" \
+    python3 - "$SCRIPT" <<'PYTHON_TTY'
+import os
+import pty
+import subprocess
+import sys
+
+script = sys.argv[1]
+master, slave = pty.openpty()
+with open(os.devnull, "wb") as output:
+    process = subprocess.Popen(
+        [script, "--"],
+        stdin=slave,
+        stdout=output,
+        stderr=output,
+        env=os.environ.copy(),
+        close_fds=True,
+    )
+os.close(slave)
+status = process.wait(timeout=5)
+os.close(master)
+with open(os.environ["JAILBOT_TTY_RESULT_FILE"], "w", encoding="ascii") as result:
+    result.write(str(status))
+PYTHON_TTY
+  helper_status=$?
+
+  if [ "$helper_status" -ne 0 ]; then
+    fail "TTY helper failed with status $helper_status"
+    return
+  fi
+  RUN_STATUS=$(cat "$tty_result")
+  assert_status 0 || return
+  assert_contains "$ARGS_DIR/arg.000004" '-it'
+}
+
 test_container_argv_preserves_empty_and_special_arguments() {
   run_cli -- printf '<%s>' '' 'two words' '*' 'back\slash' ''
 
@@ -895,6 +947,7 @@ main() {
   run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
   run_test 'SIGINT is forwarded with status 130' test_sigint_is_forwarded_with_status_130
   run_test 'SIGTERM is forwarded with status 143' test_sigterm_is_forwarded_with_status_143
+  run_test 'TTY stdin reaches docker run' test_tty_stdin_reaches_docker_run
   run_test 'container argv preserves empty and special arguments' test_container_argv_preserves_empty_and_special_arguments
   run_test 'newline arguments are rejected before Docker' test_newline_argument_is_rejected_before_docker
   run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command

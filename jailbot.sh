@@ -700,8 +700,13 @@ EOF
 
   log_verbose "Executing: docker run ..."
   FORWARDED_SIGNAL=""
-  "$@" &
+  # A non-interactive POSIX shell may assign /dev/null to an asynchronous
+  # command's stdin. Save the wrapper's stdin on an explicit descriptor first,
+  # then redirect Docker from that descriptor so TTY and piped input survive.
+  exec 3<&0
+  "$@" <&3 &
   DOCKER_PID=$!
+  exec 3<&-
 
   while :; do
     if wait "$DOCKER_PID"; then

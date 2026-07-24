@@ -242,6 +242,8 @@ Use `--` to separate jailbot options from the container command:
 
 `-h`, `--help`, and `--version` are discovery options: they print to standard output, exit successfully, do not invoke Docker, and do not require `JAILBOT_IMAGE_NAME`. Help takes priority over unrelated option errors before `--`; flags after `--` belong to the container command.
 
+The separator itself is consumed by Jailbot and is not passed after the Docker image. Container arguments retain their exact order and values, including empty strings, spaces, wildcard characters, and backslashes. Literal newline characters in an argument are rejected before Docker because the POSIX shell implementation does not support them safely.
+
 **Example:**
 ```bash
 # Options for jailbot, then command for container

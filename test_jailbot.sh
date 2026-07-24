@@ -309,7 +309,7 @@ test_separator_passes_wrapper_like_arguments() {
   if [ -n "$timezone" ]; then
     set -- "$@" --env "TZ=$timezone"
   fi
-  set -- "$@" --workdir /workspace stubimage -- printf '%s' --help
+  set -- "$@" --workdir /workspace stubimage printf '%s' --help
   assert_run_args "$@"
 }
 
@@ -408,6 +408,55 @@ test_streams_and_status_are_captured_exactly() {
   assert_docker_calls "info${NL}image${NL}run${NL}"
 }
 
+test_container_argv_preserves_empty_and_special_arguments() {
+  run_cli -- printf '<%s>' '' 'two words' '*' 'back\slash' ''
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage \
+    printf '<%s>' '' 'two words' '*' 'back\slash' ''
+  assert_run_args "$@"
+}
+
+test_newline_argument_is_rejected_before_docker() {
+  newline_argument="first${NL}second"
+  run_cli -- printf '%s' "$newline_argument"
+
+  assert_status 1 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_contains "$STDERR_FILE" 'Container arguments containing newlines are not supported' || return
+  assert_no_docker_calls
+}
+
+test_bare_invocation_adds_no_container_command() {
+  run_cli
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage
+  assert_run_args "$@"
+}
+
 test_ordinary_command_has_complete_docker_argv() {
   run_cli -- echo 'two words'
 
@@ -424,7 +473,7 @@ test_ordinary_command_has_complete_docker_argv() {
   if [ -n "$timezone" ]; then
     set -- "$@" --env "TZ=$timezone"
   fi
-  set -- "$@" --workdir /workspace stubimage -- echo 'two words'
+  set -- "$@" --workdir /workspace stubimage echo 'two words'
   assert_run_args "$@"
 }
 
@@ -451,7 +500,7 @@ test_path_with_spaces_has_exact_mount_and_translation() {
   if [ -n "$timezone" ]; then
     set -- "$@" --env "TZ=$timezone"
   fi
-  set -- "$@" --workdir /workspace stubimage -- cat "$container_dir/$(basename "$path_file")"
+  set -- "$@" --workdir /workspace stubimage cat "$container_dir/$(basename "$path_file")"
   assert_run_args "$@"
 }
 
@@ -481,7 +530,7 @@ test_persistent_volume_targets_container_home() {
     set -- "$@" --env "TZ=$timezone"
   fi
   set -- "$@" --volume jailbot_home:/home/jailbot \
-    --workdir /workspace stubimage -- echo test
+    --workdir /workspace stubimage echo test
   assert_run_args "$@"
 }
 
@@ -529,6 +578,9 @@ main() {
   run_test 'network does not consume the separator as a value' test_network_separator_is_not_consumed_as_value
   run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
   run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
+  run_test 'container argv preserves empty and special arguments' test_container_argv_preserves_empty_and_special_arguments
+  run_test 'newline arguments are rejected before Docker' test_newline_argument_is_rejected_before_docker
+  run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command
   run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
   run_test 'paths with spaces preserve mount and translated argv' test_path_with_spaces_has_exact_mount_and_translation
   run_test 'persistent volume targets the container home' test_persistent_volume_targets_container_home

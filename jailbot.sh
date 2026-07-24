@@ -37,7 +37,8 @@ NL='
 '
 MOUNTED_HOSTS_NL=""
 MOUNT_SPECS_NL=""
-CONTAINER_ARGS_NL=""
+CONTAINER_ARGS_DIR=""
+CONTAINER_ARGS_COUNT=0
 DOCKER_NETWORK=""
 
 # ============================================================================
@@ -89,7 +90,14 @@ validate_docker() {
 # SECTION 3: CLEANUP & SIGNAL HANDLING
 # ============================================================================
 
+cleanup() {
+  if [ -n "$CONTAINER_ARGS_DIR" ]; then
+    rm -rf "$CONTAINER_ARGS_DIR" || true
+  fi
+}
+
 setup_signals() {
+  trap cleanup EXIT
   trap 'log_error "Interrupted by signal"; exit 130' INT TERM
 }
 
@@ -189,29 +197,29 @@ is_path_argument() {
 init_mount_tracking() {
   MOUNTED_HOSTS_NL=""
   MOUNT_SPECS_NL=""
-  CONTAINER_ARGS_NL=""
-  log_verbose "Initialized mount tracking (in-memory)"
+  CONTAINER_ARGS_DIR=""
+  CONTAINER_ARGS_COUNT=0
+  log_verbose "Initialized mount and argument tracking"
 }
 
 add_container_arg() {
-  value="${1:-}"
-
-  # Empty args are currently ignored by design.
-  if [ -z "$value" ]; then
-    return 0
-  fi
+  value="${1-}"
 
   case "$value" in
     *"$NL"*)
-      log_warning "Skipping argument containing newline (unsupported)"
-      return 1
+      log_error "Container arguments containing newlines are not supported"
       ;;
   esac
 
-  if [ -z "$CONTAINER_ARGS_NL" ]; then
-    CONTAINER_ARGS_NL="$value"
-  else
-    CONTAINER_ARGS_NL="${CONTAINER_ARGS_NL}${NL}${value}"
+  if [ -z "$CONTAINER_ARGS_DIR" ]; then
+    CONTAINER_ARGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jailbot-args.XXXXXX")" ||
+      log_error "Could not create temporary storage for container arguments"
+  fi
+
+  CONTAINER_ARGS_COUNT=$((CONTAINER_ARGS_COUNT + 1))
+  arg_file=$(printf '%s/arg.%06d' "$CONTAINER_ARGS_DIR" "$CONTAINER_ARGS_COUNT")
+  if ! printf '%s' "$value" > "$arg_file"; then
+    log_error "Could not store container argument $CONTAINER_ARGS_COUNT"
   fi
 }
 
@@ -351,9 +359,10 @@ handle_mount_only() {
 }
 
 handle_path_argument() {
-  arg="${1:-}"
+  arg="${1-}"
 
   if [ -z "$arg" ]; then
+    add_container_arg ""
     return
   fi
 
@@ -540,18 +549,18 @@ EOF
 
   log_verbose "Docker command: $*"
 
-  # Add container arguments if any
-  if [ -n "$CONTAINER_ARGS_NL" ]; then
-    # Add -- to separate docker options from container command
-    set -- "$@" --
-    while IFS= read -r carg; do
-      if [ -z "$carg" ]; then
-        continue
-      fi
+  # Everything after the image is the container command and its exact argv.
+  if [ "$CONTAINER_ARGS_COUNT" -gt 0 ]; then
+    arg_index=1
+    while [ "$arg_index" -le "$CONTAINER_ARGS_COUNT" ]; do
+      arg_file=$(printf '%s/arg.%06d' "$CONTAINER_ARGS_DIR" "$arg_index")
+      # The sentinel preserves empty arguments and trailing newlines through
+      # command substitution. Newlines are rejected earlier by policy.
+      carg="$(cat "$arg_file"; printf x)"
+      carg=${carg%x}
       set -- "$@" "$carg"
-    done <<EOF
-$CONTAINER_ARGS_NL
-EOF
+      arg_index=$((arg_index + 1))
+    done
   fi
 
   log_verbose "Executing: docker run ..."
@@ -587,8 +596,10 @@ Options:
 
 Invocation:
   Options before -- belong to Jailbot. Everything after -- is the container
-  command. Existing host paths after -- are mounted and translated to container
-  paths. Prefix a path with a backslash to pass it without mounting.
+  command. The separator is consumed and is not passed after the Docker image.
+  Existing host paths after -- are mounted and translated to container paths.
+  Prefix a path with a backslash to pass it without mounting. Empty arguments
+  are preserved; arguments containing literal newlines are rejected.
 
   With no COMMAND, Jailbot runs the image's entrypoint or default command.
 

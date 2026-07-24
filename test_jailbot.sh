@@ -382,7 +382,31 @@ EOF
   rm -rf "$stub_dir" "$args_file"
 }
 
-# Test 18: Pipe input
+# Test 18: Entrypoint resolves direct commands using PATH from .bashrc.
+test_entrypoint_bashrc_path() {
+  log_test "Testing entrypoint PATH loading from .bashrc"
+
+  test_home="/tmp/jailbot_entrypoint_home_$$"
+  mkdir -p "$test_home/.local/bin"
+
+  cat > "$test_home/.local/bin/pi-test" <<'EOF'
+#!/bin/sh
+printf "pi-test args=%s\n" "$*"
+EOF
+  chmod +x "$test_home/.local/bin/pi-test"
+  printf 'export PATH="$HOME/.local/bin:$PATH"\n' > "$test_home/.bashrc"
+
+  output=$(HOME="$test_home" bash "$TEST_DIR/docker-example/entrypoint.sh" pi-test hello "two words" 2>/dev/null)
+  if [ "$output" = "pi-test args=hello two words" ]; then
+    log_pass "Entrypoint loads command PATH from .bashrc"
+  else
+    log_fail "Entrypoint does not load command PATH from .bashrc"
+  fi
+
+  rm -rf "$test_home"
+}
+
+# Test 19: Pipe input
 test_pipe_input() {
   log_test "Testing pipe input detection"
   if echo "test" | $SCRIPT -- cat 2>&1 | grep -q "Docker\|daemon"; then
@@ -392,7 +416,7 @@ test_pipe_input() {
   fi
 }
 
-# Test 19: Escaped paths (prefixed with backslash)
+# Test 20: Escaped paths (prefixed with backslash)
 test_escaped_path() {
   log_test "Testing escaped path handling"
 
@@ -474,6 +498,7 @@ main() {
   test_verbose_mode
   test_git_config
   test_container_home_mount
+  test_entrypoint_bashrc_path
   test_pipe_input
   test_escaped_path
 

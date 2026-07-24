@@ -16,6 +16,7 @@ if [ -n "$CONTAINER_VOLUME" ]; then
 fi
 readonly CONTAINER_VOLUME
 readonly CONTAINER_NAME_PREFIX="${JAILBOT_CONTAINER_NAME_PREFIX:-jailbot}"
+readonly DOCKER_TIMEOUT_SECONDS="${JAILBOT_DOCKER_TIMEOUT_SECONDS:-10}"
 
 # Validate required environment variables
 validate_env() {
@@ -23,6 +24,11 @@ validate_env() {
     log_error "JAILBOT_IMAGE_NAME environment variable is not set"
   fi
 
+  case "$DOCKER_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*|0)
+      log_error "JAILBOT_DOCKER_TIMEOUT_SECONDS must be a positive integer"
+      ;;
+  esac
 }
 readonly CONTAINER_WORKDIR="/workspace"
 
@@ -42,6 +48,7 @@ CONTAINER_ARGS_DIR=""
 CONTAINER_ARGS_COUNT=0
 DOCKER_NETWORK=""
 DOCKER_PID=""
+DOCKER_DETAIL_FILE=""
 FORWARDED_SIGNAL=""
 
 # ============================================================================
@@ -67,25 +74,96 @@ log_error() {
 # SECTION 2: DOCKER VALIDATION
 # ============================================================================
 
+run_with_timeout() {
+  timeout_seconds="$1"
+  output_file="$2"
+  shift 2
+
+  "$@" > /dev/null 2> "$output_file" &
+  command_pid=$!
+  (
+    sleep "$timeout_seconds"
+    kill -TERM "$command_pid" 2>/dev/null || exit 0
+    sleep 1
+    kill -KILL "$command_pid" 2>/dev/null || true
+  ) &
+  timer_pid=$!
+
+  if wait "$command_pid"; then
+    command_status=0
+  else
+    command_status=$?
+  fi
+  kill "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
+
+  if [ "$command_status" -eq 143 ] || [ "$command_status" -eq 137 ]; then
+    return 124
+  fi
+  return "$command_status"
+}
+
+log_interactive_status() {
+  if [ -t 2 ]; then
+    printf '%s\n' "$*" >&2
+  fi
+}
+
+log_docker_detail() {
+  detail_file="$1"
+  if [ "$VERBOSE" = true ] && [ -s "$detail_file" ]; then
+    while IFS= read -r detail_line; do
+      log_verbose "Docker detail: $detail_line"
+    done < "$detail_file"
+  fi
+}
+
 validate_docker() {
   log_verbose "Validating Docker environment..."
 
-  # Check Docker binary exists
   if ! command -v docker >/dev/null 2>&1; then
-    log_error "Docker not found. Please install Docker."
+    log_error "Docker was not found in PATH; install Docker and try again"
   fi
 
-  # Check Docker daemon is accessible
-  if ! docker info >/dev/null 2>&1; then
-    log_error "Docker daemon not accessible. Is Docker running?"
+  DOCKER_DETAIL_FILE="$(mktemp "${TMPDIR:-/tmp}/jailbot-docker.XXXXXX")" ||
+    log_error "Could not create temporary storage for Docker diagnostics"
+
+  log_interactive_status "Checking Docker daemon and current context..."
+  log_verbose "Checking Docker daemon and current context"
+  if run_with_timeout "$DOCKER_TIMEOUT_SECONDS" "$DOCKER_DETAIL_FILE" docker info; then
+    daemon_status=0
+  else
+    daemon_status=$?
+  fi
+  if [ "$daemon_status" -ne 0 ]; then
+    log_docker_detail "$DOCKER_DETAIL_FILE"
+    if [ "$daemon_status" -eq 124 ]; then
+      log_error "Docker daemon check timed out after $DOCKER_TIMEOUT_SECONDS seconds"
+    fi
+    if grep -Eiq 'permission denied|access denied|not permitted' "$DOCKER_DETAIL_FILE"; then
+      log_error "Permission denied while accessing Docker; check Docker socket permissions and group membership"
+    fi
+    log_error "Docker daemon or current context is not accessible; verify Docker is running and select a working context"
   fi
 
-  # Check image exists
-  log_verbose "Checking image: $IMAGE_NAME"
-  if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-    log_error "Docker image $IMAGE_NAME not found locally. Please build it first."
+  : > "$DOCKER_DETAIL_FILE"
+  log_interactive_status "Checking local Docker image $IMAGE_NAME..."
+  log_verbose "Checking local Docker image: $IMAGE_NAME"
+  if run_with_timeout "$DOCKER_TIMEOUT_SECONDS" "$DOCKER_DETAIL_FILE" docker image inspect "$IMAGE_NAME"; then
+    image_status=0
+  else
+    image_status=$?
+  fi
+  if [ "$image_status" -ne 0 ]; then
+    log_docker_detail "$DOCKER_DETAIL_FILE"
+    if [ "$image_status" -eq 124 ]; then
+      log_error "Docker image check timed out after $DOCKER_TIMEOUT_SECONDS seconds"
+    fi
+    log_error "Docker image $IMAGE_NAME was not found locally; build or pull it first"
   fi
 
+  rm -f "$DOCKER_DETAIL_FILE"
+  DOCKER_DETAIL_FILE=""
   log_verbose "Docker validation passed"
 }
 
@@ -100,13 +178,17 @@ cleanup() {
   if [ -n "$MOUNT_RECORDS_DIR" ]; then
     rm -rf "$MOUNT_RECORDS_DIR" || true
   fi
+  if [ -n "$DOCKER_DETAIL_FILE" ]; then
+    rm -f "$DOCKER_DETAIL_FILE" || true
+  fi
 }
 
 forward_signal() {
   signal_name="$1"
+  signal_status="$2"
 
   if [ -z "$DOCKER_PID" ]; then
-    return
+    exit "$signal_status"
   fi
 
   if [ -n "$FORWARDED_SIGNAL" ]; then
@@ -122,8 +204,8 @@ forward_signal() {
 
 setup_signals() {
   trap cleanup EXIT
-  trap 'forward_signal INT' INT
-  trap 'forward_signal TERM' TERM
+  trap 'forward_signal INT 130' INT
+  trap 'forward_signal TERM 143' TERM
 }
 
 # ============================================================================
@@ -682,9 +764,12 @@ Environment:
   JAILBOT_IMAGE_NAME             Required Docker image name
   JAILBOT_CONTAINER_VOLUME       Optional volume mounted at /home/jailbot
   JAILBOT_CONTAINER_NAME_PREFIX  Optional container name prefix (default: jailbot)
+  JAILBOT_DOCKER_TIMEOUT_SECONDS Docker check timeout in seconds (default: 10)
 
 SSH forwarding uses \$SSH_AUTH_SOCK on Linux and Docker Desktop's host socket
 on macOS.
+
+The configured image must already exist locally; Jailbot never pulls it.
 
 Documentation and issues: https://github.com/343dev/jailbot
 EOF

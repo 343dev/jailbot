@@ -171,6 +171,7 @@ source ~/.bashrc  # or source ~/.zshrc
 | Variable | Description | Example | Default |
 |----------|-------------|---------|---------|
 | `JAILBOT_CONTAINER_VOLUME` | Volume mounted at `/home/jailbot` for persistence | `jailbot_home` | _(none)_ |
+| `JAILBOT_DOCKER_TIMEOUT_SECONDS` | Positive timeout for Docker daemon and local-image checks | `15` | `10` |
 
 ### Understanding Persistent Storage
 
@@ -335,6 +336,12 @@ jailbot --workdir=~/webapp -- npm test
 Jailbot returns the exact status from `docker run`, including the container command's ordinary non-zero status. While Docker is running, `SIGINT` and `SIGTERM` are forwarded to it; the resulting conventional statuses are `130` and `143`. A repeated signal forces the Docker client process to stop. Temporary argument and mount-planning state is removed without replacing the Docker status, and the named container uses `--rm` so an interrupted invocation can be retried.
 
 Jailbot does not write terminal title or other control sequences to command output.
+
+### Docker Validation and Diagnostics
+
+Before `docker run`, Jailbot checks the daemon/current context and verifies that the configured image exists locally. These checks are bounded by `JAILBOT_DOCKER_TIMEOUT_SECONDS` (10 seconds by default). Jailbot never pulls an image automatically; build or pull it explicitly first.
+
+Normal errors distinguish missing Docker, socket permission problems, inaccessible daemon/context, timeout, and a missing local image. `--verbose` includes Docker's captured diagnostic lines on `stderr`; standard output remains reserved for the container command. Diagnostic capture does not print environment variables or credentials.
 
 ### Debugging
 

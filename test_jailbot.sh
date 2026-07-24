@@ -206,10 +206,22 @@ printf '%s\n' "$command_name" >> "$JAILBOT_DOCKER_CALLS_FILE"
 
 case "$command_name" in
   info)
-    exit 0
+    if [ -n "${JAILBOT_STUB_INFO_SLEEP:-}" ]; then
+      sleep "$JAILBOT_STUB_INFO_SLEEP"
+    fi
+    if [ -n "${JAILBOT_STUB_INFO_STDERR:-}" ]; then
+      printf '%s\n' "$JAILBOT_STUB_INFO_STDERR" >&2
+    fi
+    exit "${JAILBOT_STUB_INFO_STATUS:-0}"
     ;;
   image)
-    exit 0
+    if [ -n "${JAILBOT_STUB_IMAGE_SLEEP:-}" ]; then
+      sleep "$JAILBOT_STUB_IMAGE_SLEEP"
+    fi
+    if [ -n "${JAILBOT_STUB_IMAGE_STDERR:-}" ]; then
+      printf '%s\n' "$JAILBOT_STUB_IMAGE_STDERR" >&2
+    fi
+    exit "${JAILBOT_STUB_IMAGE_STATUS:-0}"
     ;;
   run)
     rm -rf "$JAILBOT_DOCKER_RUN_ARGS_DIR"
@@ -402,6 +414,90 @@ test_network_separator_is_not_consumed_as_value() {
 test_missing_ssh_socket_is_rejected_before_docker() {
   assert_validation_failure 'SSH agent forwarding requires an available SSH auth socket' --ssh -- echo test || return
   assert_contains "$STDERR_FILE" 'start an SSH agent, set SSH_AUTH_SOCK, or remove --ssh'
+}
+
+run_cli_with_docker_failure() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_TIMEOUT_SECONDS="${JAILBOT_DOCKER_TIMEOUT_SECONDS:-10}" \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    JAILBOT_STUB_INFO_SLEEP="${JAILBOT_STUB_INFO_SLEEP:-}" \
+    JAILBOT_STUB_INFO_STDERR="${JAILBOT_STUB_INFO_STDERR:-}" \
+    JAILBOT_STUB_INFO_STATUS="${JAILBOT_STUB_INFO_STATUS:-0}" \
+    JAILBOT_STUB_IMAGE_SLEEP="${JAILBOT_STUB_IMAGE_SLEEP:-}" \
+    JAILBOT_STUB_IMAGE_STDERR="${JAILBOT_STUB_IMAGE_STDERR:-}" \
+    JAILBOT_STUB_IMAGE_STATUS="${JAILBOT_STUB_IMAGE_STATUS:-0}" \
+    "$SCRIPT" "$@" > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+}
+
+clear_docker_failure_env() {
+  unset JAILBOT_DOCKER_TIMEOUT_SECONDS \
+    JAILBOT_STUB_INFO_SLEEP JAILBOT_STUB_INFO_STDERR JAILBOT_STUB_INFO_STATUS \
+    JAILBOT_STUB_IMAGE_SLEEP JAILBOT_STUB_IMAGE_STDERR JAILBOT_STUB_IMAGE_STATUS
+}
+
+test_daemon_permission_error_is_actionable() {
+  JAILBOT_STUB_INFO_STATUS=1
+  JAILBOT_STUB_INFO_STDERR='permission denied while trying to connect to the Docker daemon socket'
+  run_cli_with_docker_failure -- echo test
+  clear_docker_failure_env
+
+  assert_status 1 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_contains "$STDERR_FILE" 'Permission denied while accessing Docker' || return
+  assert_contains "$STDERR_FILE" 'socket permissions' || return
+  assert_docker_calls "info${NL}"
+}
+
+test_docker_context_error_is_actionable_and_verbose() {
+  JAILBOT_STUB_INFO_STATUS=1
+  JAILBOT_STUB_INFO_STDERR='error during connect: context deadline exceeded'
+  run_cli_with_docker_failure --verbose -- echo test
+  clear_docker_failure_env
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" 'Docker daemon or current context is not accessible' || return
+  assert_contains "$STDERR_FILE" '[VERBOSE] Docker detail: error during connect: context deadline exceeded' || return
+  assert_docker_calls "info${NL}"
+}
+
+test_missing_local_image_is_actionable() {
+  JAILBOT_STUB_IMAGE_STATUS=1
+  JAILBOT_STUB_IMAGE_STDERR='Error: No such image: stubimage'
+  run_cli_with_docker_failure -- echo test
+  clear_docker_failure_env
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" 'Docker image stubimage was not found locally' || return
+  assert_contains "$STDERR_FILE" 'build or pull it first' || return
+  assert_docker_calls "info${NL}image${NL}"
+}
+
+test_docker_check_timeout_is_bounded() {
+  JAILBOT_DOCKER_TIMEOUT_SECONDS=1
+  JAILBOT_STUB_INFO_SLEEP=5
+  run_cli_with_docker_failure -- echo test
+  clear_docker_failure_env
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" 'Docker daemon check timed out after 1 seconds' || return
+  assert_docker_calls "info${NL}"
+}
+
+test_invalid_docker_timeout_is_rejected_before_docker() {
+  JAILBOT_DOCKER_TIMEOUT_SECONDS=invalid
+  run_cli_with_docker_failure -- echo test
+  clear_docker_failure_env
+
+  assert_status 1 || return
+  assert_contains "$STDERR_FILE" 'JAILBOT_DOCKER_TIMEOUT_SECONDS must be a positive integer' || return
+  assert_no_docker_calls
 }
 
 test_streams_and_status_are_captured_exactly() {
@@ -791,6 +887,11 @@ main() {
   run_test 'network without a value is rejected before Docker' test_network_without_value_is_rejected_before_docker
   run_test 'network does not consume the separator as a value' test_network_separator_is_not_consumed_as_value
   run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
+  run_test 'Docker permission errors are actionable' test_daemon_permission_error_is_actionable
+  run_test 'Docker context errors are actionable and verbose' test_docker_context_error_is_actionable_and_verbose
+  run_test 'missing local images are actionable' test_missing_local_image_is_actionable
+  run_test 'Docker checks have a bounded timeout' test_docker_check_timeout_is_bounded
+  run_test 'invalid Docker timeout is rejected before Docker' test_invalid_docker_timeout_is_rejected_before_docker
   run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
   run_test 'SIGINT is forwarded with status 130' test_sigint_is_forwarded_with_status_130
   run_test 'SIGTERM is forwarded with status 143' test_sigterm_is_forwarded_with_status_143

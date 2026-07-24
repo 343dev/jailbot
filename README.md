@@ -330,6 +330,12 @@ jailbot --workdir=~/webapp -- npm install
 jailbot --workdir=~/webapp -- npm test
 ```
 
+### Exit Status and Interruption
+
+Jailbot returns the exact status from `docker run`, including the container command's ordinary non-zero status. While Docker is running, `SIGINT` and `SIGTERM` are forwarded to it; the resulting conventional statuses are `130` and `143`. A repeated signal forces the Docker client process to stop. Temporary argument and mount-planning state is removed without replacing the Docker status, and the named container uses `--rm` so an interrupted invocation can be retried.
+
+Jailbot does not write terminal title or other control sequences to command output.
+
 ### Debugging
 
 ```bash

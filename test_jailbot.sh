@@ -227,6 +227,29 @@ case "$command_name" in
     if [ -n "${JAILBOT_STUB_RUN_STDERR:-}" ]; then
       printf '%s\n' "$JAILBOT_STUB_RUN_STDERR" >&2
     fi
+    if [ -n "${JAILBOT_STUB_SIGNAL_FILE:-}" ]; then
+      exec python3 - <<'PYTHON_SIGNAL_STUB'
+import os
+import signal
+import time
+
+signal_file = os.environ["JAILBOT_STUB_SIGNAL_FILE"]
+ready_file = os.environ["JAILBOT_STUB_READY_FILE"]
+
+def stop(signum, _frame):
+    name = signal.Signals(signum).name.removeprefix("SIG")
+    with open(signal_file, "w", encoding="ascii") as output:
+        output.write(name)
+    raise SystemExit(128 + signum)
+
+signal.signal(signal.SIGINT, stop)
+signal.signal(signal.SIGTERM, stop)
+with open(ready_file, "w", encoding="ascii") as output:
+    output.write(str(os.getpid()))
+while True:
+    time.sleep(1)
+PYTHON_SIGNAL_STUB
+    fi
     exit "${JAILBOT_STUB_RUN_STATUS:-0}"
     ;;
 esac
@@ -406,6 +429,99 @@ test_streams_and_status_are_captured_exactly() {
   assert_no_control_bytes "$STDOUT_FILE" || return
   assert_file_content "$STDERR_FILE" "container stderr${NL}" || return
   assert_docker_calls "info${NL}image${NL}run${NL}"
+}
+
+run_signal_case() {
+  signal_name="$1"
+  expected_status="$2"
+  ready_file="$TEST_ROOT/signal-ready"
+  signal_file="$TEST_ROOT/signal-received"
+  status_file="$TEST_ROOT/signal-status"
+  reset_capture
+  rm -f "$ready_file" "$signal_file" "$status_file"
+
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    JAILBOT_STUB_SIGNAL_FILE="$signal_file" \
+    JAILBOT_STUB_READY_FILE="$ready_file" \
+    JAILBOT_SIGNAL_NAME="$signal_name" \
+    JAILBOT_SIGNAL_STATUS_FILE="$status_file" \
+    python3 - "$SCRIPT" "$STDOUT_FILE" "$STDERR_FILE" <<'PYTHON'
+import os
+import signal
+import subprocess
+import sys
+import time
+
+script, stdout_path, stderr_path = sys.argv[1:]
+def start_new_session_with_default_signals():
+    os.setsid()
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+    process = subprocess.Popen(
+        [script, "--", "sleep", "60"],
+        stdout=stdout,
+        stderr=stderr,
+        env=os.environ.copy(),
+        preexec_fn=start_new_session_with_default_signals,
+    )
+    ready_file = os.environ["JAILBOT_STUB_READY_FILE"]
+    for _ in range(100):
+        if os.path.exists(ready_file) and os.path.getsize(ready_file) > 0:
+            break
+        if process.poll() is not None:
+            break
+        time.sleep(0.05)
+    else:
+        process.kill()
+        process.wait()
+        raise SystemExit("Docker stub did not become ready for signal test")
+
+    if process.poll() is not None:
+        raise SystemExit("Jailbot exited before the signal was sent")
+    requested_signal = getattr(signal, "SIG" + os.environ["JAILBOT_SIGNAL_NAME"])
+    if requested_signal == signal.SIGINT:
+        os.killpg(process.pid, requested_signal)
+    else:
+        process.send_signal(requested_signal)
+    try:
+        status = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise SystemExit("Jailbot did not stop after the signal")
+
+with open(os.environ["JAILBOT_SIGNAL_STATUS_FILE"], "w", encoding="ascii") as output:
+    output.write(str(status))
+PYTHON
+  helper_status=$?
+  if [ "$helper_status" -ne 0 ]; then
+    fail "signal helper failed with status $helper_status"
+    return
+  fi
+  RUN_STATUS=$(cat "$status_file")
+
+  assert_status "$expected_status" || return
+  assert_file_content "$signal_file" "$signal_name" || return
+  assert_empty "$STDOUT_FILE" || return
+
+  run_cli -- echo retry
+  assert_status 0
+}
+
+test_sigint_is_forwarded_with_status_130() {
+  run_signal_case INT 130
+}
+
+test_sigterm_is_forwarded_with_status_143() {
+  run_signal_case TERM 143
 }
 
 test_container_argv_preserves_empty_and_special_arguments() {
@@ -676,6 +792,8 @@ main() {
   run_test 'network does not consume the separator as a value' test_network_separator_is_not_consumed_as_value
   run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
   run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
+  run_test 'SIGINT is forwarded with status 130' test_sigint_is_forwarded_with_status_130
+  run_test 'SIGTERM is forwarded with status 143' test_sigterm_is_forwarded_with_status_143
   run_test 'container argv preserves empty and special arguments' test_container_argv_preserves_empty_and_special_arguments
   run_test 'newline arguments are rejected before Docker' test_newline_argument_is_rejected_before_docker
   run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command

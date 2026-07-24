@@ -41,6 +41,8 @@ MOUNT_RECORDS_COUNT=0
 CONTAINER_ARGS_DIR=""
 CONTAINER_ARGS_COUNT=0
 DOCKER_NETWORK=""
+DOCKER_PID=""
+FORWARDED_SIGNAL=""
 
 # ============================================================================
 # SECTION 1: UTILITY FUNCTIONS
@@ -100,9 +102,28 @@ cleanup() {
   fi
 }
 
+forward_signal() {
+  signal_name="$1"
+
+  if [ -z "$DOCKER_PID" ]; then
+    return
+  fi
+
+  if [ -n "$FORWARDED_SIGNAL" ]; then
+    log_verbose "Repeated signal received; forcing Docker process to stop"
+    kill -KILL "$DOCKER_PID" 2>/dev/null || true
+    return
+  fi
+
+  FORWARDED_SIGNAL="$signal_name"
+  log_verbose "Forwarding SIG$signal_name to Docker process"
+  kill -s "$signal_name" "$DOCKER_PID" 2>/dev/null || true
+}
+
 setup_signals() {
   trap cleanup EXIT
-  trap 'log_error "Interrupted by signal"; exit 130' INT TERM
+  trap 'forward_signal INT' INT
+  trap 'forward_signal TERM' TERM
 }
 
 # ============================================================================
@@ -596,7 +617,28 @@ EOF
   fi
 
   log_verbose "Executing: docker run ..."
-  "$@"
+  FORWARDED_SIGNAL=""
+  "$@" &
+  DOCKER_PID=$!
+
+  while :; do
+    if wait "$DOCKER_PID"; then
+      docker_status=0
+      break
+    else
+      docker_status=$?
+    fi
+
+    # A signal can interrupt wait before Docker has exited. Keep waiting after
+    # forwarding it so cleanup and the final status reflect the child process.
+    if kill -0 "$DOCKER_PID" 2>/dev/null; then
+      continue
+    fi
+    break
+  done
+
+  DOCKER_PID=""
+  return "$docker_status"
 }
 
 # ============================================================================

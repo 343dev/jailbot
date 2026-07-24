@@ -226,7 +226,8 @@ jailbot -- node --version  # Works every time!
 | `--ssh` | Forward SSH agent socket into container |
 | `--network=NAME` | Pass `--network` to `docker run` (e.g., `host`, `bridge`, `none`) |
 | `--workdir=PATH` | Mount directory directly into `/workspace` |
-| `--help` | Show help message |
+| `-h`, `--help` | Show help and exit without requiring Docker configuration |
+| `--version` | Print the Jailbot version and exit |
 
 ### Syntax
 
@@ -237,6 +238,9 @@ jailbot [OPTIONS] [--] [COMMAND...]
 Use `--` to separate jailbot options from the container command:
 - **Everything before `--`** — Jailbot options (`--verbose`, `--git`, `--workdir`)
 - **Everything after `--`** — Command and arguments to run inside container
+- **No command after the options** — Run the image's entrypoint or default command
+
+`-h`, `--help`, and `--version` are discovery options: they print to standard output, exit successfully, do not invoke Docker, and do not require `JAILBOT_IMAGE_NAME`. Help takes priority over unrelated option errors before `--`; flags after `--` belong to the container command.
 
 **Example:**
 ```bash

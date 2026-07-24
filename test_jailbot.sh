@@ -60,6 +60,15 @@ assert_contains() {
   fi
 }
 
+assert_no_control_bytes() {
+  file="$1"
+  if LC_ALL=C tr -d '\011\012\015\040-\176' < "$file" | grep -q .; then
+    printf '    expected %s to contain no control bytes; actual contents:\n' "$file" >&2
+    od -An -tx1 -c "$file" >&2
+    return 1
+  fi
+}
+
 assert_file_content() {
   file="$1"
   expected="$2"
@@ -242,12 +251,43 @@ test_stub_preserves_exact_argv() {
   assert_empty "$STDERR_FILE"
 }
 
-test_help_is_captured_without_docker() {
-  run_cli --help
+test_long_help_is_safe_without_configuration() {
+  run_cli_without_config --help
 
   assert_status 0 || return
   assert_contains "$STDOUT_FILE" 'Usage:' || return
   assert_contains "$STDOUT_FILE" 'Docker Linux container wrapper' || return
+  assert_contains "$STDOUT_FILE" '-h, --help' || return
+  assert_contains "$STDOUT_FILE" 'https://github.com/343dev/jailbot' || return
+  assert_no_control_bytes "$STDOUT_FILE" || return
+  assert_empty "$STDERR_FILE" || return
+  assert_no_docker_calls
+}
+
+test_short_help_is_safe_without_configuration() {
+  run_cli_without_config -h
+
+  assert_status 0 || return
+  assert_contains "$STDOUT_FILE" 'Usage:' || return
+  assert_no_control_bytes "$STDOUT_FILE" || return
+  assert_empty "$STDERR_FILE" || return
+  assert_no_docker_calls
+}
+
+test_help_wins_before_separator() {
+  run_cli_without_config --unknown-option --help
+
+  assert_status 0 || return
+  assert_contains "$STDOUT_FILE" 'Usage:' || return
+  assert_empty "$STDERR_FILE" || return
+  assert_no_docker_calls
+}
+
+test_version_is_safe_without_configuration() {
+  run_cli_without_config --version
+
+  assert_status 0 || return
+  assert_file_content "$STDOUT_FILE" "jailbot 2.0.0${NL}" || return
   assert_empty "$STDERR_FILE" || return
   assert_no_docker_calls
 }
@@ -310,9 +350,9 @@ test_streams_and_status_are_captured_exactly() {
   RUN_STATUS=$?
   unset JAILBOT_STUB_RUN_STDOUT JAILBOT_STUB_RUN_STDERR JAILBOT_STUB_RUN_STATUS
 
-  expected_stdout=$(printf '\033[22;0t\033]0;jailbot\007container stdout\n\033[23;0t')
   assert_status 17 || return
-  assert_file_content "$STDOUT_FILE" "$expected_stdout" || return
+  assert_file_content "$STDOUT_FILE" "container stdout${NL}" || return
+  assert_no_control_bytes "$STDOUT_FILE" || return
   assert_file_content "$STDERR_FILE" "container stderr${NL}" || return
   assert_docker_calls "info${NL}image${NL}run${NL}"
 }
@@ -421,7 +461,10 @@ main() {
   create_docker_stub
 
   run_test 'Docker stub preserves exact argv elements' test_stub_preserves_exact_argv
-  run_test 'help streams are captured and Docker is not called' test_help_is_captured_without_docker
+  run_test 'long help is safe without configuration' test_long_help_is_safe_without_configuration
+  run_test 'short help is safe without configuration' test_short_help_is_safe_without_configuration
+  run_test 'help wins over errors before the separator' test_help_wins_before_separator
+  run_test 'version is safe without configuration' test_version_is_safe_without_configuration
   run_test 'separator passes wrapper-like arguments to the container' test_separator_passes_wrapper_like_arguments
   run_test 'unknown options have a strict failure contract' test_unknown_option_has_exact_failure_contract
   run_test 'missing configuration stops before Docker' test_missing_configuration_stops_before_docker

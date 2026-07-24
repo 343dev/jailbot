@@ -6,6 +6,7 @@ set -e
 set -u
 
 # Configuration (from environment variables)
+readonly VERSION="2.0.0"
 readonly IMAGE_NAME="${JAILBOT_IMAGE_NAME:-}"
 readonly CONTAINER_USER="jailbot"
 readonly CONTAINER_HOME="/home/${CONTAINER_USER}"
@@ -88,13 +89,7 @@ validate_docker() {
 # SECTION 3: CLEANUP & SIGNAL HANDLING
 # ============================================================================
 
-cleanup() {
-  # Restore the original terminal window title
-  printf '\033[23;0t' 2>/dev/null || true
-}
-
 setup_signals() {
-  trap cleanup EXIT
   trap 'log_error "Interrupted by signal"; exit 130' INT TERM
 }
 
@@ -560,69 +555,74 @@ Usage: ${script_name} [OPTIONS] [--] [COMMAND...]
 
 Docker Linux container wrapper with automatic path mounting.
 
-REQUIRED ENVIRONMENT VARIABLES:
-  JAILBOT_IMAGE_NAME      Docker image name (e.g., "debian:trixie-slim")
-
-OPTIONAL ENVIRONMENT VARIABLES:
-  JAILBOT_CONTAINER_VOLUME    Volume name to mount at /home/jailbot
-  JAILBOT_CONTAINER_NAME_PREFIX  Prefix for the random container name (default: "jailbot")
-
-OPTIONS:
-  --verbose         Enable verbose output
-  --git             Mount Git configuration files (~/.gitconfig, ~/.config/git/ignore)
-  --ssh             Forward SSH agent socket into container
-  --network=NAME    Pass --network to docker run (e.g., "host", "bridge", "none")
-  --network NAME    Pass --network to docker run
-  --workdir=PATH    Mount directory directly into container's workdir (/workspace)
-  --workdir PATH    Mount directory directly into container's workdir (/workspace)
-  --help            Show this help message
-
-SEPARATOR:
-  Use -- to separate jailbot options from container command.
-  Everything after -- is passed to the container with automatic path mounting.
-
-ARGS:
-  Any arguments to pass to the container. Path arguments are automatically
-  detected and mounted with proper translation to container paths.
-
-WORKDIR MODE:
-  Use --workdir=PATH to mount a directory directly into the container's
-  working directory (/workspace). This is useful when you want to run commands
-  in the context of a specific directory without passing it as an argument.
-  Example: ${script_name} --workdir=. -- bash  # Start shell in current directory
-
-FEATURES:
-  Use --git flag to mount Git configuration files:
-    ~/.gitconfig       	 -> ${CONTAINER_HOME}/.gitconfig
-    ~/.config/git/ignore -> ${CONTAINER_HOME}/.config/git/ignore
-
-  Use --ssh flag to forward SSH agent into container:
-    Host socket ($SSH_AUTH_SOCK or /run/host-services/ssh-auth.sock)
-    is mounted at /ssh-auth.sock with SSH_AUTH_SOCK env variable set.
-
-EXAMPLES:
-  ${script_name} --verbose -- ls -la
+Examples:
+  ${script_name} --workdir=. -- make test
   ${script_name} --git -- git status
-  ${script_name} --ssh -- git clone git@github.com:user/repo.git
-  ${script_name} --network=host -- curl http://localhost:8080
-  ${script_name} --workdir=. -- bash
-  ${script_name} --workdir=/home/user/projects -- myscript.sh
   ${script_name} -- cat ./local-file.txt
+
+Options:
+  -h, --help         Show this help message and exit
+  --version          Show the Jailbot version and exit
+  --verbose          Enable verbose diagnostics on stderr
+  --git              Mount Git configuration files read-only
+  --ssh              Forward the SSH agent socket into the container
+  --network=NAME     Pass a network name to docker run
+  --network NAME     Pass a network name to docker run
+  --workdir=PATH     Mount a directory at /workspace
+  --workdir PATH     Mount a directory at /workspace
+
+Invocation:
+  Options before -- belong to Jailbot. Everything after -- is the container
+  command. Existing host paths after -- are mounted and translated to container
+  paths. Prefix a path with a backslash to pass it without mounting.
+
+  With no COMMAND, Jailbot runs the image's entrypoint or default command.
+
+Environment:
+  JAILBOT_IMAGE_NAME             Required Docker image name
+  JAILBOT_CONTAINER_VOLUME       Optional volume mounted at /home/jailbot
+  JAILBOT_CONTAINER_NAME_PREFIX  Optional container name prefix (default: jailbot)
+
+SSH forwarding uses \$SSH_AUTH_SOCK on Linux and Docker Desktop's host socket
+on macOS.
+
+Documentation and issues: https://github.com/343dev/jailbot
 EOF
 }
 
-main() {
-  # Set terminal window title and save the previous one for restoration
-  printf '\033[22;0t' 2>/dev/null || true  # save current title to terminal stack
-  printf '\033]0;jailbot\007'
+show_version() {
+  printf 'jailbot %s\n' "$VERSION"
+}
 
-  # Check for --help first, before validation
-  case "${1:-}" in
-    --help|-h)
-      show_usage
-      exit 0
-      ;;
-  esac
+handle_discovery_options() {
+  for arg in "$@"; do
+    case "$arg" in
+      --)
+        break
+        ;;
+      -h|--help)
+        show_usage
+        exit 0
+        ;;
+    esac
+  done
+
+  for arg in "$@"; do
+    case "$arg" in
+      --)
+        break
+        ;;
+      --version)
+        show_version
+        exit 0
+        ;;
+    esac
+  done
+}
+
+main() {
+  # Discovery commands are side-effect free and do not require configuration.
+  handle_discovery_options "$@"
 
   # Validate required environment variables
   validate_env
@@ -653,6 +653,11 @@ main() {
 
       --help|-h)
         show_usage
+        exit 0
+        ;;
+
+      --version)
+        show_version
         exit 0
         ;;
 

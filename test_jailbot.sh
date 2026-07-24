@@ -330,6 +330,57 @@ test_missing_configuration_stops_before_docker() {
   assert_no_docker_calls
 }
 
+assert_validation_failure() {
+  expected_message="$1"
+  shift
+  run_cli "$@"
+
+  assert_status 1 || return
+  assert_empty "$STDOUT_FILE" || return
+  assert_contains "$STDERR_FILE" "$expected_message" || return
+  assert_no_docker_calls
+}
+
+test_empty_workdir_is_rejected_before_docker() {
+  assert_validation_failure '--workdir requires a non-empty directory path' --workdir=
+}
+
+test_missing_workdir_is_rejected_before_docker() {
+  missing_path="$TEST_ROOT/missing-workdir"
+  assert_validation_failure "Workdir does not exist: $missing_path" --workdir "$missing_path" -- echo test
+}
+
+test_workdir_file_is_rejected_before_docker() {
+  file_path="$TEST_ROOT/not-a-directory"
+  printf 'file\n' > "$file_path"
+  assert_validation_failure "Workdir must be a directory: $file_path" --workdir="$file_path" -- echo test
+}
+
+test_workdir_without_value_is_rejected_before_docker() {
+  assert_validation_failure '--workdir requires a path argument' --workdir
+}
+
+test_workdir_separator_is_not_consumed_as_value() {
+  assert_validation_failure '--workdir requires a path argument' --workdir -- echo test
+}
+
+test_empty_network_is_rejected_before_docker() {
+  assert_validation_failure '--network requires a non-empty network name' --network=
+}
+
+test_network_without_value_is_rejected_before_docker() {
+  assert_validation_failure '--network requires a network name argument' --network
+}
+
+test_network_separator_is_not_consumed_as_value() {
+  assert_validation_failure '--network requires a network name argument' --network -- echo test
+}
+
+test_missing_ssh_socket_is_rejected_before_docker() {
+  assert_validation_failure 'SSH agent forwarding requires an available SSH auth socket' --ssh -- echo test || return
+  assert_contains "$STDERR_FILE" 'start an SSH agent, set SSH_AUTH_SOCK, or remove --ssh'
+}
+
 test_streams_and_status_are_captured_exactly() {
   reset_capture
   export JAILBOT_STUB_RUN_STDOUT='container stdout'
@@ -468,6 +519,15 @@ main() {
   run_test 'separator passes wrapper-like arguments to the container' test_separator_passes_wrapper_like_arguments
   run_test 'unknown options have a strict failure contract' test_unknown_option_has_exact_failure_contract
   run_test 'missing configuration stops before Docker' test_missing_configuration_stops_before_docker
+  run_test 'empty workdir is rejected before Docker' test_empty_workdir_is_rejected_before_docker
+  run_test 'missing workdir is rejected before Docker' test_missing_workdir_is_rejected_before_docker
+  run_test 'workdir files are rejected before Docker' test_workdir_file_is_rejected_before_docker
+  run_test 'workdir without a value is rejected before Docker' test_workdir_without_value_is_rejected_before_docker
+  run_test 'workdir does not consume the separator as a value' test_workdir_separator_is_not_consumed_as_value
+  run_test 'empty network is rejected before Docker' test_empty_network_is_rejected_before_docker
+  run_test 'network without a value is rejected before Docker' test_network_without_value_is_rejected_before_docker
+  run_test 'network does not consume the separator as a value' test_network_separator_is_not_consumed_as_value
+  run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
   run_test 'stdout, stderr, and exit status are independent' test_streams_and_status_are_captured_exactly
   run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
   run_test 'paths with spaces preserve mount and translated argv' test_path_with_spaces_has_exact_mount_and_translation

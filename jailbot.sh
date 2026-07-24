@@ -318,37 +318,36 @@ handle_mount_only() {
   mount_path="${1:-}"
 
   if [ -z "$mount_path" ]; then
-    log_warning "Empty mount path provided"
-    return
+    log_error "--workdir requires a non-empty directory path"
   fi
 
   abs_path="$(get_absolute_path "$mount_path")"
 
   if [ -z "$abs_path" ]; then
-    log_warning "Failed to resolve absolute path for: $mount_path"
-    return
+    log_error "Could not resolve workdir path: $mount_path"
   fi
 
-  # Skip container workdir paths
   case "$abs_path" in
     /workspace*)
-      log_warning "Cannot mount container workdir path: $mount_path"
-      return
+      log_error "Workdir must be a host directory outside /workspace: $mount_path"
       ;;
   esac
 
-  # Validate path exists and is directory
   if [ ! -e "$abs_path" ]; then
-    log_warning "Mount-only path does not exist: $abs_path"
-    return
+    log_error "Workdir does not exist: $abs_path"
   fi
 
   if [ ! -d "$abs_path" ]; then
-    log_warning "Mount-only target must be directory: $abs_path"
-    return
+    log_error "Workdir must be a directory: $abs_path"
   fi
 
-  add_mount "$abs_path" "$CONTAINER_WORKDIR"
+  if [ ! -r "$abs_path" ] || [ ! -x "$abs_path" ]; then
+    log_error "Workdir must be readable and searchable: $abs_path"
+  fi
+
+  if ! add_mount "$abs_path" "$CONTAINER_WORKDIR"; then
+    log_error "Could not mount workdir: $abs_path"
+  fi
 }
 
 handle_path_argument() {
@@ -435,6 +434,20 @@ handle_path_argument() {
 # SECTION 8: EXECUTION
 # ============================================================================
 
+validate_requested_modes() {
+  if [ "$MOUNT_SSH" != true ]; then
+    return
+  fi
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    return
+  fi
+
+  if [ -z "${SSH_AUTH_SOCK:-}" ] || [ ! -S "$SSH_AUTH_SOCK" ]; then
+    log_error "SSH agent forwarding requires an available SSH auth socket; start an SSH agent, set SSH_AUTH_SOCK, or remove --ssh"
+  fi
+}
+
 detect_interactive_mode() {
   if [ -t 0 ]; then
     printf '%s' "-it"
@@ -446,6 +459,7 @@ detect_interactive_mode() {
 }
 
 execute_container() {
+  validate_requested_modes
   validate_docker
 
   # Detect timezone
@@ -565,11 +579,11 @@ Options:
   --version          Show the Jailbot version and exit
   --verbose          Enable verbose diagnostics on stderr
   --git              Mount Git configuration files read-only
-  --ssh              Forward the SSH agent socket into the container
-  --network=NAME     Pass a network name to docker run
+  --ssh              Forward the SSH agent socket; fail if unavailable
+  --network=NAME     Pass a non-empty network name to docker run
   --network NAME     Pass a network name to docker run
-  --workdir=PATH     Mount a directory at /workspace
-  --workdir PATH     Mount a directory at /workspace
+  --workdir=PATH     Mount an existing host directory at /workspace
+  --workdir PATH     Mount an existing host directory at /workspace
 
 Invocation:
   Options before -- belong to Jailbot. Everything after -- is the container
@@ -684,7 +698,7 @@ main() {
 
       --workdir)
         shift
-        if [ $# -eq 0 ]; then
+        if [ $# -eq 0 ] || [ "${1:-}" = "--" ]; then
           log_error "--workdir requires a path argument"
         fi
         handle_mount_only "$1"
@@ -693,12 +707,15 @@ main() {
 
       --network=*)
         DOCKER_NETWORK="${arg#--network=}"
+        if [ -z "$DOCKER_NETWORK" ]; then
+          log_error "--network requires a non-empty network name"
+        fi
         shift
         ;;
 
       --network)
         shift
-        if [ $# -eq 0 ]; then
+        if [ $# -eq 0 ] || [ "${1:-}" = "--" ]; then
           log_error "--network requires a network name argument"
         fi
         DOCKER_NETWORK="$1"

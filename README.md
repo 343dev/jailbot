@@ -223,9 +223,9 @@ jailbot -- node --version  # Works every time!
 |--------|-------------|
 | `--verbose` | Enable detailed logging |
 | `--git` | Mount Git configuration files (readonly) |
-| `--ssh` | Forward SSH agent socket into container |
-| `--network=NAME` | Pass `--network` to `docker run` (e.g., `host`, `bridge`, `none`) |
-| `--workdir=PATH` | Mount directory directly into `/workspace` |
+| `--ssh` | Forward the SSH agent socket; fail before Docker if it is unavailable |
+| `--network=NAME` | Pass a non-empty `--network` value to `docker run` (e.g., `host`, `bridge`, `none`) |
+| `--workdir=PATH` | Mount an existing, accessible host directory directly into `/workspace` |
 | `-h`, `--help` | Show help and exit without requiring Docker configuration |
 | `--version` | Print the Jailbot version and exit |
 
@@ -476,7 +476,7 @@ With `--git` flag, mounts (readonly):
 
 ### SSH Agent Forwarding
 
-With `--ssh` flag, forwards the host's SSH agent socket into the container:
+With `--ssh` flag, forwards the host's SSH agent socket into the container. Jailbot treats this as an explicit requirement: on Linux it exits before contacting Docker when `SSH_AUTH_SOCK` is unset or does not identify a socket.
 
 - **macOS** — Uses Docker Desktop's virtual socket path `/run/host-services/ssh-auth.sock`
 - **Linux** — Uses the `$SSH_AUTH_SOCK` environment variable
@@ -633,6 +633,11 @@ jailbot --ssh -- ssh-add -l
 
 # Use --verbose to see socket detection details
 jailbot --verbose --ssh -- git clone git@github.com:user/repo.git
+
+# If Jailbot rejects --ssh, start an agent and add a key, or remove --ssh
+# from commands that do not need SSH authentication.
+eval "$(ssh-agent -s)"
+ssh-add
 ```
 
 ## License

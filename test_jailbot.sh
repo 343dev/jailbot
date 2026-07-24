@@ -333,7 +333,56 @@ test_git_config() {
   fi
 }
 
-# Test 17: Pipe input
+# Test 17: Persistent volume targets the configured container home.
+test_container_home_mount() {
+  log_test "Testing container home volume mount"
+
+  stub_dir="/tmp/jailbot_home_stub_$$"
+  args_file="/tmp/jailbot_home_args_$$.txt"
+
+  mkdir -p "$stub_dir"
+  cat > "$stub_dir/docker" <<'EOF'
+#!/bin/sh
+
+case "${1:-}" in
+  info)
+    exit 0
+    ;;
+  image)
+    exit 0
+    ;;
+  run)
+    shift
+    : > "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+    for arg in "$@"; do
+      printf "%s\n" "$arg" >> "$JAILBOT_DOCKER_RUN_ARGS_FILE"
+    done
+    exit 0
+    ;;
+esac
+
+exit 0
+EOF
+  chmod +x "$stub_dir/docker"
+
+  PATH="$stub_dir:$PATH" \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_VOLUME=jailbot_home \
+    JAILBOT_DOCKER_RUN_ARGS_FILE="$args_file" \
+    $SCRIPT -- echo test >/dev/null 2>&1
+
+  if grep -Fxq "jailbot_home:/home/jailbot" "$args_file" \
+    && grep -Fxq "jailbot" "$args_file" \
+    && grep -Fxq "HOME=/home/jailbot" "$args_file"; then
+    log_pass "Container uses the jailbot user and home directory"
+  else
+    log_fail "Container user or home directory is incorrect"
+  fi
+
+  rm -rf "$stub_dir" "$args_file"
+}
+
+# Test 18: Pipe input
 test_pipe_input() {
   log_test "Testing pipe input detection"
   if echo "test" | $SCRIPT -- cat 2>&1 | grep -q "Docker\|daemon"; then
@@ -343,7 +392,7 @@ test_pipe_input() {
   fi
 }
 
-# Test 18: Escaped paths (prefixed with backslash)
+# Test 19: Escaped paths (prefixed with backslash)
 test_escaped_path() {
   log_test "Testing escaped path handling"
 
@@ -424,6 +473,7 @@ main() {
   test_workdir_path
   test_verbose_mode
   test_git_config
+  test_container_home_mount
   test_pipe_input
   test_escaped_path
 

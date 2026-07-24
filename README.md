@@ -89,14 +89,20 @@ chmod +x ~/bin/jailbot
 Create your Docker image:
 
 ```dockerfile
-# Example: Dockerfile
+# Minimal example. See docker-example/Dockerfile for a complete image.
 FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y \
-    git curl vim nano python3 nodejs npm \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sudo \
+        git curl vim nano python3 nodejs npm \
+    && useradd --create-home --shell /bin/bash jailbot \
+    && echo "jailbot ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/jailbot \
+    && chmod 0440 /etc/sudoers.d/jailbot \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+ENV HOME=/home/jailbot
+WORKDIR /home/jailbot
+USER jailbot
 ```
 
 ```bash
@@ -104,15 +110,15 @@ WORKDIR /workspace
 docker build -t mydev:latest .
 ```
 
-**Optional: Create persistent volume for /root**
+**Optional: Create a persistent volume for the container user's home directory**
 
 If you want to preserve installed tools and configurations between runs:
 
 ```bash
 # Create persistent volume
-docker volume create mydev_root
+docker volume create mydev_home
 
-# You'll set JAILBOT_CONTAINER_VOLUME=mydev_root in the next step
+# You'll set JAILBOT_CONTAINER_VOLUME=mydev_home in the next step
 ```
 
 Skip this if you prefer ephemeral containers that start fresh each time.
@@ -131,14 +137,14 @@ export JAILBOT_IMAGE_NAME="mydev:latest"
 alias dev="jailbot"
 ```
 
-**Full setup (persistent /root directory):**
+**Full setup (persistent container home directory):**
 
 ```bash
 # Required: Docker image name
 export JAILBOT_IMAGE_NAME="mydev:latest"
 
-# Optional: Volume name for /root persistence
-export JAILBOT_CONTAINER_VOLUME="mydev_root"
+# Optional: Volume name for the container home directory
+export JAILBOT_CONTAINER_VOLUME="mydev_home"
 
 # Optional: Create alias for convenience
 alias dev="jailbot"
@@ -158,17 +164,17 @@ source ~/.bashrc  # or source ~/.zshrc
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `JAILBOT_IMAGE_NAME` | Docker image to use | `debian:trixie-slim` |
+| `JAILBOT_IMAGE_NAME` | Docker image containing the `jailbot` user | `mydev:latest` |
 
 #### Optional
 
 | Variable | Description | Example | Default |
 |----------|-------------|---------|---------|
-| `JAILBOT_CONTAINER_VOLUME` | Volume to mount at `/root` for persistence | `jailbot_root` | _(none)_ |
+| `JAILBOT_CONTAINER_VOLUME` | Volume mounted at `/home/jailbot` for persistence | `jailbot_home` | _(none)_ |
 
 ### Understanding Persistent Storage
 
-The `JAILBOT_CONTAINER_VOLUME` variable controls whether the container's `/root` directory persists between runs.
+The `JAILBOT_CONTAINER_VOLUME` variable controls whether the `jailbot` user's `/home/jailbot` directory persists between runs.
 
 **Without a volume (ephemeral mode):**
 - Container starts fresh every time
@@ -177,7 +183,7 @@ The `JAILBOT_CONTAINER_VOLUME` variable controls whether the container's `/root`
 - All installed packages and configs are lost on exit
 
 **With a volume (persistent mode):**
-- Container's `/root` directory is preserved
+- Container user's home directory is preserved
 - Installed tools, packages, and configurations persist
 - Shell history, dotfiles, and cached data remain available
 - Essential for development workflows
@@ -196,10 +202,10 @@ The `JAILBOT_CONTAINER_VOLUME` variable controls whether the container's `/root`
 
 ```bash
 # Create persistent volume
-docker volume create jailbot_root
+docker volume create jailbot_home
 
 # Configure environment
-export JAILBOT_CONTAINER_VOLUME="jailbot_root"
+export JAILBOT_CONTAINER_VOLUME="jailbot_home"
 
 # Install fnm (Fast Node Manager) - this persists!
 jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
@@ -391,7 +397,7 @@ jailbot -- mypy ./src/
 
 ```bash
 # First, ensure you have persistent volume configured
-export JAILBOT_CONTAINER_VOLUME="jailbot_root"
+export JAILBOT_CONTAINER_VOLUME="jailbot_home"
 
 # Install fnm (one-time setup)
 jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
@@ -461,8 +467,8 @@ Jailbot identifies path arguments by checking if they exist as files or director
 ### Git Configuration
 
 With `--git` flag, mounts (readonly):
-- `~/.gitconfig` → `/root/.gitconfig`
-- `~/.config/git/ignore` → `/root/.config/git/ignore`
+- `~/.gitconfig` → `/home/jailbot/.gitconfig`
+- `~/.config/git/ignore` → `/home/jailbot/.config/git/ignore`
 
 ### SSH Agent Forwarding
 
@@ -519,10 +525,11 @@ echo $JAILBOT_IMAGE_NAME
 # List available images
 docker images
 
-# Pull or build the image
-docker pull debian:trixie-slim
-# or
-docker build -t myimage:latest .
+# Build an image that contains the jailbot user
+docker build -t mydev:latest docker-example
+
+# Update the configured image name
+export JAILBOT_IMAGE_NAME="mydev:latest"
 
 # Update environment variable
 export JAILBOT_IMAGE_NAME="myimage:latest"
@@ -559,22 +566,30 @@ jailbot --workdir=. -- ls -la   # ✅ Mounts current directory
 
 ### Permission denied errors
 
-**Problem:** Container can't write to mounted paths.
+**Problem:** The `jailbot` user can't read or write a mounted path.
+
+Jailbot containers run as the non-root `jailbot` user. Bind mounts retain the host file ownership and permissions, so the container user must be allowed to access them.
 
 **Solution:**
 ```bash
 # Check host file permissions
 ls -la ./myfile.txt
 
-# Note: Mounted paths are writable by default
-# The container runs as root, so host permissions matter
-
-# Make file writable
+# Make a file readable and writable by its owner
 chmod 644 ./myfile.txt
 
-# For directories
+# Make a directory accessible by its owner
 chmod 755 ./mydir
 ```
+
+If an existing persistent home volume was previously mounted at `/root`, rebuild the example image and start it again. Its entrypoint migrates ownership of `/home/jailbot` to the `jailbot` user. For a fresh start, remove and recreate the volume:
+
+```bash
+docker volume rm "$JAILBOT_CONTAINER_VOLUME"
+docker volume create "$JAILBOT_CONTAINER_VOLUME"
+```
+
+Removing a volume permanently deletes the tools, shell configuration, caches, and other data stored in it.
 
 ### Git commands don't work
 

@@ -7,9 +7,11 @@ set -u
 
 # Configuration (from environment variables)
 readonly IMAGE_NAME="${JAILBOT_IMAGE_NAME:-}"
+readonly CONTAINER_USER="jailbot"
+readonly CONTAINER_HOME="/home/${CONTAINER_USER}"
 CONTAINER_VOLUME="${JAILBOT_CONTAINER_VOLUME:-}"
 if [ -n "$CONTAINER_VOLUME" ]; then
-  CONTAINER_VOLUME="${CONTAINER_VOLUME}:/root"
+  CONTAINER_VOLUME="${CONTAINER_VOLUME}:${CONTAINER_HOME}"
 fi
 readonly CONTAINER_VOLUME
 readonly CONTAINER_NAME_PREFIX="${JAILBOT_CONTAINER_NAME_PREFIX:-jailbot}"
@@ -104,14 +106,14 @@ mount_git_config() {
   # Mount global gitconfig if exists (read-only)
   if [ -f "${HOME}/.gitconfig" ]; then
     log_verbose "Mounting gitconfig: ${HOME}/.gitconfig"
-    add_mount "${HOME}/.gitconfig" "/root/.gitconfig" "readonly"
+    add_mount "${HOME}/.gitconfig" "${CONTAINER_HOME}/.gitconfig" "readonly"
   fi
 
   # Mount global git ignore if exists (read-only)
   if [ -f "${HOME}/.config/git/ignore" ]; then
     # Ensure directory exists in container
     log_verbose "Mounting git ignore: ${HOME}/.config/git/ignore"
-    add_mount "${HOME}/.config/git/ignore" "/root/.config/git/ignore" "readonly"
+    add_mount "${HOME}/.config/git/ignore" "${CONTAINER_HOME}/.config/git/ignore" "readonly"
   fi
 }
 
@@ -364,10 +366,10 @@ handle_path_argument() {
   # Handle escaped paths (prefixed with \) - pass through without mounting
   case "$arg" in
     \\~/*)
-      # Convert escaped ~/ to /root/
-      unescaped_path="/root${arg#\\\~}"
+      # Expand escaped ~/ inside the container without mounting the host path.
+      unescaped_path="${CONTAINER_HOME}${arg#\\~}"
       add_container_arg "$unescaped_path"
-      log_verbose "Converted escaped ~/ to /root: $unescaped_path"
+      log_verbose "Converted escaped ~/ to ${CONTAINER_HOME}: $unescaped_path"
       return
       ;;
     \\*)
@@ -513,6 +515,10 @@ EOF
     fi
   fi
 
+  # Run as the image's non-root user with its fixed home directory.
+  set -- "$@" --user "$CONTAINER_USER"
+  set -- "$@" --env "HOME=$CONTAINER_HOME"
+
   # Add environment and volumes
   if [ -n "$TIME_ZONE" ]; then
     set -- "$@" --env "TZ=$TIME_ZONE"
@@ -558,7 +564,7 @@ REQUIRED ENVIRONMENT VARIABLES:
   JAILBOT_IMAGE_NAME      Docker image name (e.g., "debian:trixie-slim")
 
 OPTIONAL ENVIRONMENT VARIABLES:
-  JAILBOT_CONTAINER_VOLUME    Volume name to mount at /root (e.g., "jailbot_root")
+  JAILBOT_CONTAINER_VOLUME    Volume name to mount at /home/jailbot
   JAILBOT_CONTAINER_NAME_PREFIX  Prefix for the random container name (default: "jailbot")
 
 OPTIONS:
@@ -587,8 +593,8 @@ WORKDIR MODE:
 
 FEATURES:
   Use --git flag to mount Git configuration files:
-    ~/.gitconfig       	 -> /root/.gitconfig
-    ~/.config/git/ignore -> /root/.config/git/ignore
+    ~/.gitconfig       	 -> ${CONTAINER_HOME}/.gitconfig
+    ~/.config/git/ignore -> ${CONTAINER_HOME}/.config/git/ignore
 
   Use --ssh flag to forward SSH agent into container:
     Host socket ($SSH_AUTH_SOCK or /run/host-services/ssh-auth.sock)

@@ -3,693 +3,314 @@
 
 # Jailbot 2.0
 
+**Run commands in a Docker Linux environment without writing mount flags by hand.**
+
 </div>
 
-**A Docker Linux container wrapper with automatic filesystem path mounting**
-
-Jailbot seamlessly bridges your host filesystem and containerized Linux environment, automatically detecting and mounting paths without manual `-v` flags.
-
-> 💡 **Fun fact:** Named after [Jailbot from the animated series Superjail!](https://superjail.fandom.com/wiki/Jailbot) — a robot that captures and transports people. This script similarly "transports" your files into Docker containers.
-
-## Rationale
-
-### The Problem
-
-Working with Docker containers often requires manually mounting paths with `-v` or `--mount` flags:
+Jailbot detects existing host paths in command arguments, mounts them into the
+container, and rewrites the arguments to their container paths.
 
 ```bash
-# Without jailbot - verbose and error-prone
-docker run -v /home/user/project:/workspace \
-           -v /home/user/config.json:/workspace/config.json \
-           -v ~/.gitconfig:/root/.gitconfig:ro \
-           my-image ./script.sh config.json
+# Instead of planning multiple docker run -v arguments:
+docker run --rm \
+  -v "$PWD:/workspace/project" \
+  -v "$HOME/data:/workspace/data" \
+  mydev:latest python3 /workspace/project/process.py /workspace/data/input.csv
+
+# Pass the host paths directly:
+jailbot -- python3 ./process.py ~/data/input.csv
 ```
-
-This becomes tedious when:
-- Working with multiple files from different directories
-- Switching between projects frequently
-- Running quick one-off commands
-- Teaching Docker to newcomers
-
-### The Solution
-
-Jailbot automatically detects paths in your arguments and mounts them transparently:
-
-```bash
-# With jailbot - simple and intuitive
-jailbot --git -- ./script.sh ~/config.json
-```
-
-No manual mounting, no path translation — just run commands naturally as if the container were your local shell.
 
 ## Features
 
-- **Automatic Path Detection** — Recognizes file and directory arguments automatically
-- **Smart Mounting** — Mounts parent directories for files, full directories for folders
-- **Path Translation** — Translates host paths to container paths transparently
-- **Git Integration** — Optional mounting of `.gitconfig` and global git ignore
-- **Tilde Expansion** — Supports `~/path` notation
-- **Relative Paths** — Handles `./` and `../` paths correctly
-- **Network Configuration** — Pass `--network` to Docker for custom network setup (host, bridge, etc.)
-- **SSH Agent Forwarding** — Forward host SSH agent into container for git/ssh operations
-- **Timezone Sync** — Automatically syncs host timezone to container
-- **Interactive Detection** — Smart TTY detection for interactive shells
-- **Duplicate Prevention** — Avoids mounting the same path multiple times
-- **Escaped Paths** — Prefix path with `\` to pass it without mounting (e.g., `\\/dev/null`)
-- **POSIX Compliant** — Works on Linux, macOS, and BSD systems
+- Automatically mounts existing file and directory arguments
+- Supports absolute, relative, and `~/` paths
+- Mounts a project directly at `/workspace` with `--workdir`
+- Optionally mounts Git configuration and forwards the SSH agent
+- Passes custom network configuration to Docker
+- Supports a persistent volume for the container user's home directory
+- Preserves command exit statuses and forwards interruption signals
+- Runs quietly by default and keeps diagnostics on `stderr`
+- Uses a POSIX-compatible shell
 
-## Requirements
+## Quick start
 
-- **Docker** — Version 20.10+ recommended
-- **POSIX Shell** — `sh`, `bash`, `dash`, or `zsh`
-- **Unix-like OS** — Linux, macOS, BSD, or WSL2
-
-Optional utilities (automatically detected):
-- `realpath` — For better path resolution (usually preinstalled on Linux)
-
-## Installation
-
-### 1. Download the Script
+### 1. Install Jailbot
 
 ```bash
-# Download to /usr/local/bin (system-wide)
-sudo curl -o /usr/local/bin/jailbot \
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/jailbot \
   https://raw.githubusercontent.com/343dev/jailbot/main/jailbot.sh
-sudo chmod +x /usr/local/bin/jailbot
-
-# Or download to ~/bin (user-specific)
-mkdir -p ~/bin
-curl -o ~/bin/jailbot \
-  https://raw.githubusercontent.com/343dev/jailbot/main/jailbot.sh
-chmod +x ~/bin/jailbot
+chmod +x ~/.local/bin/jailbot
 ```
 
-### 2. Prepare Your Docker Environment
+Ensure `~/.local/bin` is in your `PATH`.
 
-Create your Docker image:
+For a system-wide installation, download the script to
+`/usr/local/bin/jailbot` instead and make it executable.
 
-```dockerfile
-# Minimal example. See docker-example/Dockerfile for a complete image.
-FROM debian:trixie-slim
+### 2. Prepare a Docker image
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends sudo \
-        git curl vim nano python3 nodejs npm \
-    && useradd --create-home --shell /bin/bash jailbot \
-    && echo "jailbot ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/jailbot \
-    && chmod 0440 /etc/sudoers.d/jailbot \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV HOME=/home/jailbot
-WORKDIR /home/jailbot
-USER jailbot
-```
+The image must contain a non-root user named `jailbot`. This repository includes
+an example development image:
 
 ```bash
-# Build image
-docker build -t mydev:latest .
+docker build -t mydev:latest docker-example
 ```
 
-**Optional: Create a persistent volume for the container user's home directory**
+See [`docker-example/Dockerfile`](./docker-example/Dockerfile) when adapting
+your own image.
 
-If you want to preserve installed tools and configurations between runs:
-
-```bash
-# Create persistent volume
-docker volume create mydev_home
-
-# You'll set JAILBOT_CONTAINER_VOLUME=mydev_home in the next step
-```
-
-Skip this if you prefer ephemeral containers that start fresh each time.
-
-### 3. Configure Environment Variables
-
-Add to your shell configuration (`~/.bashrc`, `~/.zshrc`, etc.):
-
-**Minimal setup (ephemeral containers):**
+### 3. Configure and run
 
 ```bash
-# Required: Docker image name
 export JAILBOT_IMAGE_NAME="mydev:latest"
 
-# Optional: Create alias for convenience
-alias dev="jailbot"
+# Start the image's default shell with the current directory at /workspace
+jailbot --workdir=. -- bash
 ```
 
-**Full setup (persistent container home directory):**
-
-```bash
-# Required: Docker image name
-export JAILBOT_IMAGE_NAME="mydev:latest"
-
-# Optional: Volume name for the container home directory
-export JAILBOT_CONTAINER_VOLUME="mydev_home"
-
-# Optional: Create alias for convenience
-alias dev="jailbot"
-```
-
-Reload your shell:
-
-```bash
-source ~/.bashrc  # or source ~/.zshrc
-```
-
-## Configuration
-
-### Environment Variables
-
-#### Required
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `JAILBOT_IMAGE_NAME` | Docker image containing the `jailbot` user | `mydev:latest` |
-
-#### Optional
-
-| Variable | Description | Example | Default |
-|----------|-------------|---------|---------|
-| `JAILBOT_CONTAINER_VOLUME` | Volume mounted at `/home/jailbot` for persistence | `jailbot_home` | _(none)_ |
-| `JAILBOT_DOCKER_TIMEOUT_SECONDS` | Positive timeout for Docker daemon and local-image checks | `15` | `10` |
-
-### Understanding Persistent Storage
-
-The `JAILBOT_CONTAINER_VOLUME` variable controls whether the `jailbot` user's `/home/jailbot` directory persists between runs.
-
-**Without a volume (ephemeral mode):**
-- Container starts fresh every time
-- No state is preserved between runs
-- Useful for one-off tasks, CI/CD, or testing
-- All installed packages and configs are lost on exit
-
-**With a volume (persistent mode):**
-- Container user's home directory is preserved
-- Installed tools, packages, and configurations persist
-- Shell history, dotfiles, and cached data remain available
-- Essential for development workflows
-
-**Common use cases for persistent storage:**
-
-| Use Case | Why You Need It |
-|----------|----------------|
-| **Node.js with fnm** | Install Node.js versions once, use them across sessions |
-| **Global npm packages** | `npm install -g` packages persist (typescript, eslint, etc.) |
-| **Development tools** | Vim/Neovim plugins, tmux configurations |
-| **Shell customization** | .bashrc, .zshrc, command history |
-| **Package manager caches** | pip cache, npm cache, apt cache |
-
-**Example: Setting up Node.js with fnm**
-
-```bash
-# Create persistent volume
-docker volume create jailbot_home
-
-# Configure environment
-export JAILBOT_CONTAINER_VOLUME="jailbot_home"
-
-# Install fnm (Fast Node Manager) - this persists!
-jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
-
-# The example image's docker-example/entrypoint.sh loads ~/.bashrc for direct
-# commands, so fnm is available without sourcing the file manually.
-
-# Install Node.js and make it the default — this also persists!
-jailbot -- fnm install 20
-jailbot -- fnm default 20
-
-# Now Node.js is available in all future sessions
-jailbot -- node --version  # Works every time!
-```
-
-### Command-Line Options
-
-| Option | Description |
-|--------|-------------|
-| `--verbose` | Enable detailed logging |
-| `--git` | Mount Git configuration files (readonly) |
-| `--ssh` | Forward the SSH agent socket; fail before Docker if it is unavailable |
-| `--network=NAME` | Pass a non-empty `--network` value to `docker run` (e.g., `host`, `bridge`, `none`) |
-| `--workdir=PATH` | Mount an existing, accessible host directory directly into `/workspace` |
-| `-h`, `--help` | Show help and exit without requiring Docker configuration |
-| `--version` | Print the Jailbot version and exit |
-
-### Syntax
-
-```bash
-jailbot [OPTIONS] [--] [COMMAND...]
-```
-
-Use `--` to separate jailbot options from the container command:
-- **Everything before `--`** — Jailbot options (`--verbose`, `--git`, `--workdir`)
-- **Everything after `--`** — Command and arguments to run inside container
-- **No command after the options** — Run the image's entrypoint or default command
-
-`-h`, `--help`, and `--version` are discovery options: they print to standard output, exit successfully, do not invoke Docker, and do not require `JAILBOT_IMAGE_NAME`. Help takes priority over unrelated option errors before `--`; flags after `--` belong to the container command.
-
-The separator itself is consumed by Jailbot and is not passed after the Docker image. Container arguments retain their exact order and values, including empty strings, spaces, wildcard characters, and backslashes. Literal newline characters in an argument are rejected before Docker because the POSIX shell implementation does not support them safely.
-
-**Example:**
-```bash
-# Options for jailbot, then command for container
-jailbot --verbose --git -- git status
-```
+Add the export to `~/.bashrc`, `~/.zshrc`, or the appropriate shell
+configuration file to keep it between sessions.
 
 ## Usage
 
-### Basic Examples
-
-```bash
-# Run a local script
-jailbot -- ./myscript.sh
-
-# Process a local file
-jailbot -- cat ./data.txt
-
-# Work with multiple files
-jailbot -- python3 ./process.py ./input.csv ./output.json
-
-# Use files from different directories
-jailbot -- node ~/projects/app.js ~/config/settings.json
+```text
+jailbot [OPTIONS] [--] [COMMAND...]
 ```
 
-### Interactive Shell
+Options before `--` belong to Jailbot. Everything after `--` is the command and
+arguments for the container. If no command is provided, Jailbot runs the
+image's entrypoint or default command.
+
+### Options
+
+| Option | Description |
+| --- | --- |
+| `-h`, `--help` | Show help without requiring Docker configuration |
+| `--version` | Print the Jailbot version |
+| `--verbose` | Write mount and Docker diagnostics to `stderr` |
+| `--git` | Mount the host's Git configuration files read-only |
+| `--ssh` | Forward the host SSH agent; fail if it is unavailable |
+| `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run` |
+| `--workdir PATH`, `--workdir=PATH` | Mount an existing host directory at `/workspace` |
+
+### Examples
 
 ```bash
 # Start an interactive shell
 jailbot -- bash
 
-# Start shell in a specific directory
-jailbot --workdir=./myproject -- bash
+# Run a command with the current project mounted at /workspace
+jailbot --workdir=. -- make test
 
-# Start shell with Git configured
-jailbot --git -- bash
-```
+# Mount and translate an individual file argument
+jailbot -- cat ./data.txt
 
-### Git Operations
+# Use files from different host directories
+jailbot -- python3 ./process.py ~/data/input.csv
 
-```bash
-# Mount git config and run git commands
+# Use host Git configuration
 jailbot --git -- git status
-jailbot --git -- git commit -m "Update"
-jailbot --git -- git push
-```
 
-### SSH Agent Forwarding
-
-```bash
-# Forward SSH agent and clone a repository
-jailbot --ssh -- git clone git@github.com:user/repo.git
-
-# Combine with --git for full Git+SSH workflow
+# Use host Git configuration and SSH credentials
 jailbot --git --ssh -- git push
 
-# Use SSH inside an interactive shell
-jailbot --ssh -- bash
-```
-
-### Network Configuration
-
-```bash
-# Use host network for local service access
+# Access services through the host network
 jailbot --network=host -- curl http://localhost:8080
 
-# Combine with other options
-jailbot --network=host --ssh -- git clone git@github.com:user/repo.git
-
-# Use a custom Docker network
-jailbot --network=my-network -- curl http://my-service:3000
-```
-
-### Working with Directories
-
-```bash
-# Mount current directory and list files
-jailbot --workdir=. -- ls -la
-
-# Run make in a project directory
-jailbot --workdir=./myproject -- make build
-
-# Run npm commands
-jailbot --workdir=~/webapp -- npm install
-jailbot --workdir=~/webapp -- npm test
-```
-
-### Exit Status and Interruption
-
-Jailbot returns the exact status from `docker run`, including the container command's ordinary non-zero status. While Docker is running, `SIGINT` and `SIGTERM` are forwarded to it; the resulting conventional statuses are `130` and `143`. A repeated signal forces the Docker client process to stop. Temporary argument and mount-planning state is removed without replacing the Docker status, and the named container uses `--rm` so an interrupted invocation can be retried.
-
-Jailbot does not write terminal title or other control sequences to command output.
-
-### Docker Validation and Diagnostics
-
-Before `docker run`, Jailbot checks the daemon/current context and verifies that the configured image exists locally. These checks are bounded by `JAILBOT_DOCKER_TIMEOUT_SECONDS` (10 seconds by default). Jailbot never pulls an image automatically; build or pull it explicitly first.
-
-Normal successful startup is quiet. Errors distinguish missing Docker, socket permission problems, inaccessible daemon/context, timeout, and a missing local image. `--verbose` reports validation progress and includes Docker's captured diagnostic lines on `stderr`; standard output remains reserved for the container command. Diagnostic capture does not print environment variables or credentials.
-
-### Debugging
-
-```bash
-# See what's being mounted
-jailbot --verbose -- ./script.sh ./data.txt
-
-# Verbose output with Git config
-jailbot --verbose --git -- git status
-```
-
-### System Paths
-
-```bash
-# Pass system paths without mounting (use backslash prefix)
-jailbot -- curl -o \\/dev/null http://example.com
+# Pass a container-side system path without mounting it
 jailbot -- cat \\/proc/cpuinfo
 ```
 
-## Advanced Examples
+Run `jailbot --help` for the terminal-accessible command reference.
 
-### Complex Development Workflow
+## Configuration
 
-```bash
-# Process data from multiple sources
-jailbot -- python3 ./analyze.py \
-  ~/data/2024/sales.csv \
-  ~/data/2024/inventory.json \
-  /tmp/output/report.pdf
+| Variable | Required | Description | Default |
+| --- | --- | --- | --- |
+| `JAILBOT_IMAGE_NAME` | Yes | Name of an existing local Docker image | — |
+| `JAILBOT_CONTAINER_VOLUME` | No | Docker volume mounted at `/home/jailbot` | None |
+| `JAILBOT_CONTAINER_NAME_PREFIX` | No | Prefix for generated container names | `jailbot` |
+| `JAILBOT_DOCKER_TIMEOUT_SECONDS` | No | Positive timeout for Docker checks | `10` |
 
-# All paths are automatically mounted!
-```
+Jailbot validates the Docker daemon and configured image before each run. It
+never pulls an image automatically; build or pull the image explicitly first.
 
-### Build Pipeline
+### Persistent container home
 
-```bash
-# Build a C++ project
-jailbot --workdir=./myproject -- bash -c "
-  cmake -B build &&
-  cmake --build build &&
-  ctest --test-dir build
-"
-```
-
-### Data Processing Pipeline
+Without `JAILBOT_CONTAINER_VOLUME`, each container starts with the home
+directory from the image. Set a named volume to preserve shell history,
+dotfiles, installed tools, and package-manager caches:
 
 ```bash
-# Chain multiple commands
-jailbot --workdir=./data -- bash -c "
-  python3 extract.py raw.csv > processed.csv &&
-  python3 analyze.py processed.csv > results.json &&
-  cat results.json
-"
-```
-
-### Testing Across Environments
-
-```bash
-# Test Python script in containerized environment
-jailbot -- python3 -m pytest ./tests/
-
-# Run linting
-jailbot -- pylint ./src/*.py
-
-# Check types
-jailbot -- mypy ./src/
-```
-
-### Node.js Development with Persistent Environment
-
-**Setting up Node.js with fnm (Fast Node Manager):**
-
-```bash
-# First, ensure you have persistent volume configured
+docker volume create jailbot_home
 export JAILBOT_CONTAINER_VOLUME="jailbot_home"
-
-# Install fnm (one-time setup)
-jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
-
-# The example image's docker-example/entrypoint.sh loads ~/.bashrc for direct
-# commands, so fnm, Node.js, and npm are available without sourcing it manually.
-
-# Install Node.js versions (persists across sessions)
-jailbot -- fnm install 20
-jailbot -- fnm default 20
-
-# Use Node.js
-jailbot --workdir=./my-app -- npm install
-jailbot --workdir=./my-app -- npm run build
-jailbot --workdir=./my-app -- npm test
-
-# Use an interactive shell when several commands must share one shell
-jailbot -- bash -ic "fnm use 18 && node --version"
 ```
 
-**Install global npm packages (with persistence):**
+The volume is mounted at `/home/jailbot`. Removing it permanently deletes the
+state stored there.
+
+## How path mounting works
+
+Jailbot examines each argument after `--`. When an argument identifies an
+existing host path, Jailbot adds a bind mount and replaces the argument with the
+corresponding container path.
+
+- **File:** mounts its parent directory at `/workspace/<parent-name>`
+- **Directory:** mounts it at `/workspace/<directory-name>`
+- **`--workdir`:** mounts the selected directory directly at `/workspace`
+- **Repeated path:** reuses the existing mount
+- **Conflicting target:** fails before starting Docker
+
+For example, if `/home/alice/project/config.json` exists:
 
 ```bash
-# Install global tools (one-time setup)
-jailbot -- npm install -g typescript eslint prettier
-
-# Use them in your projects
-jailbot --workdir=./my-project -- tsc --init
-jailbot --workdir=./my-project -- eslint src/
+jailbot -- cat /home/alice/project/config.json
 ```
 
-## How It Works
+Jailbot mounts `/home/alice/project` at `/workspace/project` and passes
+`/workspace/project/config.json` to `cat`.
 
-### Path Detection
+Only existing host paths are mounted automatically. Ordinary values, URLs, and
+other non-path arguments are passed through unchanged.
 
-Jailbot identifies path arguments by checking if they exist as files or directories on the host filesystem.
+### Passing container-side paths
 
-**Supported path formats:**
-- `./relative/path` — Relative paths
-- `../parent/path` — Parent directory references
-- `~/home/path` — Tilde expansion
-- `/absolute/path` — Absolute paths
+Prefix an argument with a backslash when it should remain a container-side path
+instead of being considered for mounting. In an ordinary shell invocation, use
+two backslashes so one reaches Jailbot:
 
-**Escaped paths (no mounting):**
-- `\/path/to/file` — Prefix with `\` to pass path as argument without mounting
-- Example: `jailbot -- curl -o \\/dev/null http://example.com`
+```bash
+jailbot -- curl -o \\/dev/null https://example.com
+jailbot -- cat \\~/container-only-file
+```
 
-**Excluded patterns:**
-- `http://`, `https://`, `ftp://`, `file://` — URLs (not files)
-- `@scope/package` — NPM scoped packages (don't exist as files)
-- `/workspace/*` — Container-internal paths
+The first backslash is removed before the argument is passed to the container.
+An escaped `~/` path is translated relative to `/home/jailbot`.
 
-### Mounting Strategy
+Arguments retain their order and values, including empty strings, spaces,
+wildcards, and backslashes. Literal newlines in arguments are rejected. Paths
+containing commas or newlines cannot be represented safely by the automatic
+mount format and are also rejected before Docker starts.
 
-**For files:**
-- Mounts the parent directory
-- Translates file path to container location
-- Example: `~/docs/file.txt` → mounts `~/docs` to `/workspace/docs`, passes `/workspace/docs/file.txt`
+## Git and SSH
 
-**For directories:**
-- Mounts directory directly to `/workspace/<basename>`
-- Example: `~/projects/app` → mounts to `/workspace/app`
+`--git` mounts these host files read-only when they exist:
 
-### Mount Planning and Deduplication
-
-Before contacting Docker, Jailbot builds a complete mount plan:
-
-- Repeated references to the same host path reuse one mount and one translated container path.
-- Automatic targets use `/workspace/<basename>`.
-- Different host paths that would use the same target are rejected with a collision error before Docker runs.
-- Paths containing commas or literal newlines cannot be represented safely by the automatic mount format and are rejected before Docker runs.
-- Existing `/workspace` paths and arguments prefixed with `\` are passed through without automatic mounting. Escaping is the opt-out for values that should remain container-side paths.
-- A mount is recorded only after its host path, target, and Docker mount representation have all been validated.
-- Temporary planning state is cleaned up automatically on exit.
-
-### Git Configuration
-
-With `--git` flag, mounts (readonly):
 - `~/.gitconfig` → `/home/jailbot/.gitconfig`
 - `~/.config/git/ignore` → `/home/jailbot/.config/git/ignore`
 
-### SSH Agent Forwarding
+`--ssh` mounts the host agent at `/ssh-auth.sock` and sets `SSH_AUTH_SOCK` in
+the container. On Linux, Jailbot uses the host's `$SSH_AUTH_SOCK`; on macOS, it
+uses Docker Desktop's host-services socket. Because SSH forwarding is explicitly
+requested, Jailbot exits before contacting Docker if the required Linux socket
+is unavailable.
 
-With `--ssh` flag, forwards the host's SSH agent socket into the container. Jailbot treats this as an explicit requirement: on Linux it exits before contacting Docker when `SSH_AUTH_SOCK` is unset or does not identify a socket.
+Jailbot forwards the agent only. It does not copy private keys into the
+container.
 
-- **macOS** — Uses Docker Desktop's virtual socket path `/run/host-services/ssh-auth.sock`
-- **Linux** — Uses the `$SSH_AUTH_SOCK` environment variable
+## Runtime behavior
 
-The socket is mounted at `/ssh-auth.sock` inside the container with `SSH_AUTH_SOCK` environment variable set accordingly. This allows `git`, `ssh`, `scp`, and other SSH-based tools to use the host's SSH keys without copying them into the container.
+- Successful startup is quiet unless `--verbose` is enabled.
+- Container output remains on `stdout`; Jailbot warnings and diagnostics use
+  `stderr`.
+- The `docker run` status is returned unchanged, including a container command's
+  non-zero status.
+- `SIGINT` and `SIGTERM` are forwarded to Docker. Conventional interrupted
+  statuses are `130` and `143`.
+- Containers use `--rm`, and temporary mount-planning state is cleaned up on
+  exit.
+- Interactive input and TTY allocation are selected from the current standard
+  input.
+- The host timezone is passed to the container when it can be detected.
 
 ## Troubleshooting
 
-### Script fails with "Docker not found"
+For bug reports, include the operating system, Docker version, shell, minimal
+reproduction steps, and `--verbose` diagnostics. Do not include credentials or
+other secrets.
 
-**Problem:** Docker is not installed or not in PATH.
+### Docker is unavailable
 
-**Solution:**
+Check that Docker is installed, the daemon is running, and the current user can
+access it:
+
 ```bash
-# Check Docker installation
-which docker
-docker --version
-
-# Install Docker if needed
-# See: https://docs.docker.com/get-docker/
+docker version
+docker info
 ```
 
-### Script fails with "Docker daemon not accessible"
+On Linux, socket permission errors commonly require adding the user to the
+Docker group or correcting the selected Docker context.
 
-**Problem:** Docker daemon is not running or requires permissions.
+### The configured image is missing
 
-**Solution:**
-```bash
-# Start Docker daemon (Linux)
-sudo systemctl start docker
-
-# Add user to docker group (Linux)
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Verify
-docker ps
-```
-
-### Script fails with "Image not found"
-
-**Problem:** Environment variable `JAILBOT_IMAGE_NAME` points to non-existent image.
-
-**Solution:**
+Jailbot only uses local images:
 
 ```bash
-# Check your image name
-echo $JAILBOT_IMAGE_NAME
-
-# List available images
-docker images
-
-# Build an image that contains the jailbot user
+echo "$JAILBOT_IMAGE_NAME"
+docker image inspect "$JAILBOT_IMAGE_NAME"
 docker build -t mydev:latest docker-example
-
-# Update the configured image name
-export JAILBOT_IMAGE_NAME="mydev:latest"
-
-# Update environment variable
-export JAILBOT_IMAGE_NAME="myimage:latest"
 ```
 
-### Paths not mounting correctly
+### A path is not mounted
 
-**Problem:** Paths aren't being detected or mounted.
+Automatic mounting applies only to existing paths passed as separate arguments
+after `--`. Use `--verbose` to inspect the mount plan:
 
-**Solution:**
 ```bash
-# Use --verbose to see what's happening
-jailbot --verbose -- ./myscript.sh ./data.txt
-
-# Check if path exists
-ls -la ./myscript.sh
-
-# Try absolute path
-jailbot --verbose -- "$(pwd)/myscript.sh"
+jailbot --verbose -- cat ./data.txt
 ```
 
-### Container can't find files
+Use `--workdir=.` when the command needs access to an entire project rather than
+a few explicit path arguments.
 
-**Problem:** Files appear to exist but container reports "file not found".
+### A mounted path is not accessible
 
-**Solution:**
+Bind mounts retain host ownership and permissions. The container runs as the
+non-root `jailbot` user, so that user must be able to read or write the path as
+required.
+
 ```bash
-# Verify you're passing the path as argument
-jailbot -- ls -la ./myfile.txt  # ✅ Correct
-
-# Use --workdir for current directory access
-jailbot --workdir=. -- ls -la   # ✅ Mounts current directory
+ls -ld ./mydir
+ls -l ./myfile.txt
 ```
 
-### Permission denied errors
+### SSH forwarding fails
 
-**Problem:** The `jailbot` user can't read or write a mounted path.
-
-Jailbot containers run as the non-root `jailbot` user. Bind mounts retain the host file ownership and permissions, so the container user must be allowed to access them.
-
-**Solution:**
-```bash
-# Check host file permissions
-ls -la ./myfile.txt
-
-# Make a file readable and writable by its owner
-chmod 644 ./myfile.txt
-
-# Make a directory accessible by its owner
-chmod 755 ./mydir
-```
-
-If an existing persistent home volume was previously mounted at `/root`, rebuild the example image and start it again. Its entrypoint migrates ownership of `/home/jailbot` to the `jailbot` user. For a fresh start, remove and recreate the volume:
+On Linux, verify that an agent is running and its socket is available:
 
 ```bash
-docker volume rm "$JAILBOT_CONTAINER_VOLUME"
-docker volume create "$JAILBOT_CONTAINER_VOLUME"
-```
-
-Removing a volume permanently deletes the tools, shell configuration, caches, and other data stored in it.
-
-### Git commands don't work
-
-**Problem:** Git inside container can't find configuration.
-
-**Solution:**
-
-```bash
-# Use --git flag
-jailbot --git -- git status
-
-# Verify git config exists on host
-ls -la ~/.gitconfig
-
-# Check if Git is installed in container
-jailbot -- which git
-```
-
-### SSH agent not working inside container
-
-**Problem:** `--ssh` flag is set but SSH operations fail (e.g., `git clone` over SSH, `ssh` commands).
-
-**Solution:**
-
-```bash
-# Verify SSH agent is running on host
+echo "$SSH_AUTH_SOCK"
 ssh-add -l
-
-# On Linux, check that SSH_AUTH_SOCK is set
-echo $SSH_AUTH_SOCK
-
-# On macOS, ensure Docker Desktop has access to the SSH agent
-# Check Docker Desktop → Settings → General → "Enable default Docker socket"
-
-# Test SSH forwarding inside container
 jailbot --ssh -- ssh-add -l
+```
 
-# Use --verbose to see socket detection details
-jailbot --verbose --ssh -- git clone git@github.com:user/repo.git
+On macOS, SSH forwarding requires Docker Desktop's host-services socket.
 
-# If Jailbot rejects --ssh, start an agent and add a key, or remove --ssh
-# from commands that do not need SSH authentication.
-eval "$(ssh-agent -s)"
-ssh-add
+## Requirements
+
+- Docker 20.10 or newer is recommended
+- A POSIX-compatible shell
+- `realpath` is optional and used when available for path resolution
+
+## Contributing
+
+Contributions and bug reports are welcome at
+[github.com/343dev/jailbot](https://github.com/343dev/jailbot).
+
+The script is intended to remain POSIX-compatible. Run the test suite before
+submitting changes:
+
+```bash
+./test_jailbot.sh
 ```
 
 ## License
 
-This script is provided as-is for personal and commercial use. Feel free to modify and distribute.
-
-## Contributing
-
-Contributions, issues, and feature requests are welcome! The script is designed to be POSIX-compliant and should work across different Unix-like systems.
-
-### Reporting Issues
-
-When reporting issues, please include:
-- Your operating system and version
-- Docker version (`docker --version`)
-- Shell type (`echo $SHELL`)
-- Output with `--verbose` flag
-- Minimal reproduction steps
-
----
-
-Made with 🤖 for seamless Docker workflows.
-
----
+This script is provided as-is for personal and commercial use. You may modify
+and distribute it.
 
 ## Other projects
 

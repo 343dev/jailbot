@@ -211,8 +211,12 @@ export JAILBOT_CONTAINER_VOLUME="jailbot_home"
 # Install fnm (Fast Node Manager) - this persists!
 jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
 
-# Install Node.js - also persists!
-jailbot -- bash -c "source ~/.bashrc && fnm install 20 && fnm use 20"
+# The example image's docker-example/entrypoint.sh loads ~/.bashrc for direct
+# commands, so fnm is available without sourcing the file manually.
+
+# Install Node.js and make it the default — this also persists!
+jailbot -- fnm install 20
+jailbot -- fnm default 20
 
 # Now Node.js is available in all future sessions
 jailbot -- node --version  # Works every time!
@@ -421,28 +425,31 @@ export JAILBOT_CONTAINER_VOLUME="jailbot_home"
 # Install fnm (one-time setup)
 jailbot -- bash -c "curl -fsSL https://fnm.vercel.app/install | bash"
 
+# The example image's docker-example/entrypoint.sh loads ~/.bashrc for direct
+# commands, so fnm, Node.js, and npm are available without sourcing it manually.
+
 # Install Node.js versions (persists across sessions)
-jailbot -- bash -c "source ~/.bashrc && fnm install 20 && fnm default 20"
-jailbot -- bash -c "source ~/.bashrc && fnm install 18"
+jailbot -- fnm install 20
+jailbot -- fnm default 20
 
 # Use Node.js
-jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm install"
-jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm run build"
-jailbot --workdir=./my-app -- bash -c "source ~/.bashrc && npm test"
+jailbot --workdir=./my-app -- npm install
+jailbot --workdir=./my-app -- npm run build
+jailbot --workdir=./my-app -- npm test
 
-# Switch Node.js versions easily
-jailbot -- bash -c "source ~/.bashrc && fnm use 18 && node --version"
+# Use an interactive shell when several commands must share one shell
+jailbot -- bash -ic "fnm use 18 && node --version"
 ```
 
 **Install global npm packages (with persistence):**
 
 ```bash
 # Install global tools (one-time setup)
-jailbot -- bash -c "source ~/.bashrc && npm install -g typescript eslint prettier"
+jailbot -- npm install -g typescript eslint prettier
 
 # Use them in your projects
-jailbot --workdir=./my-project -- bash -c "source ~/.bashrc && tsc --init"
-jailbot --workdir=./my-project -- bash -c "source ~/.bashrc && eslint src/"
+jailbot --workdir=./my-project -- tsc --init
+jailbot --workdir=./my-project -- eslint src/
 ```
 
 ## How It Works

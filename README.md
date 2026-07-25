@@ -85,15 +85,15 @@ image's entrypoint or default command.
 
 ### Options
 
-| Option | Description |
-| --- | --- |
-| `-h`, `--help` | Show help without requiring Docker configuration |
-| `--version` | Print the Jailbot version |
-| `--verbose` | Write mount and Docker diagnostics to `stderr` |
-| `--git` | Mount the host's Git configuration files read-only |
-| `--ssh` | Forward the host SSH agent; fail if it is unavailable |
-| `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run` |
-| `--workdir PATH`, `--workdir=PATH` | Mount an existing host directory at `/workspace` |
+| Option                             | Description                                           |
+| ---------------------------------- | ----------------------------------------------------- |
+| `-h`, `--help`                     | Show help without requiring Docker configuration      |
+| `--version`                        | Print the Jailbot version                             |
+| `--verbose`                        | Write mount and Docker diagnostics to `stderr`        |
+| `--git`                            | Mount the host's Git configuration files read-only    |
+| `--ssh`                            | Forward the host SSH agent; fail if it is unavailable |
+| `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run`         |
+| `--workdir PATH`, `--workdir=PATH` | Mount an existing host directory at `/workspace`      |
 
 ### Examples
 
@@ -127,12 +127,12 @@ Run `jailbot --help` for the terminal-accessible command reference.
 
 ## Configuration
 
-| Variable | Required | Description | Default |
-| --- | --- | --- | --- |
-| `JAILBOT_IMAGE_NAME` | Yes | Name of an existing local Docker image | — |
-| `JAILBOT_CONTAINER_VOLUME` | No | Docker volume mounted at `/home/jailbot` | None |
-| `JAILBOT_CONTAINER_NAME_PREFIX` | No | Prefix for generated container names | `jailbot` |
-| `JAILBOT_DOCKER_TIMEOUT_SECONDS` | No | Positive timeout for Docker checks | `10` |
+| Variable                         | Required | Description                              | Default   |
+| -------------------------------- | -------- | ---------------------------------------- | --------- |
+| `JAILBOT_IMAGE_NAME`             | Yes      | Name of an existing local Docker image   | —         |
+| `JAILBOT_CONTAINER_VOLUME`       | No       | Docker volume mounted at `/home/jailbot` | None      |
+| `JAILBOT_CONTAINER_NAME_PREFIX`  | No       | Prefix for generated container names     | `jailbot` |
+| `JAILBOT_DOCKER_TIMEOUT_SECONDS` | No       | Positive timeout for Docker checks       | `10`      |
 
 Jailbot validates the Docker daemon and configured image before each run. It
 never pulls an image automatically; build or pull the image explicitly first.

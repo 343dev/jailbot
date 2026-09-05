@@ -20,6 +20,10 @@ PASSED=0
 FAILED=0
 RUN_STATUS=0
 
+# Tests assert exact Docker argv, so drop host terminal identity that
+# jailbot.sh would forward into the container environment.
+unset TERM_PROGRAM TERM_PROGRAM_VERSION
+
 cleanup() {
   rm -rf "$TEST_ROOT"
 }
@@ -757,6 +761,38 @@ test_ordinary_command_has_complete_docker_argv() {
   assert_run_args "$@"
 }
 
+test_terminal_program_environment_is_forwarded() {
+  reset_capture
+  PATH="$STUB_DIR:$PATH" \
+    TERM=dumb \
+    TERM_PROGRAM='WezTerm' \
+    TERM_PROGRAM_VERSION='20240203-110809-5046fc22' \
+    SSH_AUTH_SOCK='' \
+    JAILBOT_IMAGE_NAME=stubimage \
+    JAILBOT_CONTAINER_NAME_PREFIX=test \
+    JAILBOT_DOCKER_CALLS_FILE="$CALLS_FILE" \
+    JAILBOT_DOCKER_RUN_ARGS_DIR="$ARGS_DIR" \
+    "$SCRIPT" -- echo test > "$STDOUT_FILE" 2> "$STDERR_FILE"
+  RUN_STATUS=$?
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --user jailbot --env HOME=/home/jailbot \
+    --env TERM_PROGRAM=WezTerm \
+    --env TERM_PROGRAM_VERSION=20240203-110809-5046fc22
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage echo test
+  assert_run_args "$@"
+}
+
 test_repeated_directory_uses_one_mount_and_one_target() {
   path_dir="$TEST_ROOT/repeated-project"
   mkdir -p "$path_dir"
@@ -970,6 +1006,7 @@ main() {
   run_test 'newline arguments are rejected before Docker' test_newline_argument_is_rejected_before_docker
   run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command
   run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
+  run_test 'terminal program environment is forwarded when set' test_terminal_program_environment_is_forwarded
   run_test 'repeated directories use one mount and target' test_repeated_directory_uses_one_mount_and_one_target
   run_test 'colliding mount targets are rejected before Docker' test_colliding_mount_targets_are_rejected_before_docker
   run_test 'comma paths are rejected before Docker' test_comma_path_is_rejected_before_docker

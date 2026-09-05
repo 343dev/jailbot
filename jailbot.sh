@@ -664,6 +664,14 @@ EOF
   set -- "$@" --user "$CONTAINER_USER"
   set -- "$@" --env "HOME=$CONTAINER_HOME"
 
+  # Forward terminal identity when the host provides it.
+  if [ "${TERM_PROGRAM+x}" = x ]; then
+    set -- "$@" --env "TERM_PROGRAM=$TERM_PROGRAM"
+  fi
+  if [ "${TERM_PROGRAM_VERSION+x}" = x ]; then
+    set -- "$@" --env "TERM_PROGRAM_VERSION=$TERM_PROGRAM_VERSION"
+  fi
+
   # Add environment and volumes
   if [ -n "$TIME_ZONE" ]; then
     set -- "$@" --env "TZ=$TIME_ZONE"

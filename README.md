@@ -224,6 +224,7 @@ container.
 - Interactive input and TTY allocation are selected from the current standard
   input.
 - The host timezone is passed to the container when it can be detected.
+- `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` are forwarded when set on the host.
 
 ## Troubleshooting
 

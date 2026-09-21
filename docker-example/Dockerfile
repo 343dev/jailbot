@@ -1,4 +1,4 @@
-FROM debian:trixie-20260623@sha256:5268cb2ba09b06de9b5c14217d3d023db8a18567635306d05209ae63cb005051
+FROM debian:stable
 
 ENV USERNAME=jailbot
 

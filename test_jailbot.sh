@@ -301,6 +301,10 @@ test_long_help_is_safe_without_configuration() {
   assert_contains "$STDOUT_FILE" 'Usage:' || return
   assert_contains "$STDOUT_FILE" 'Docker Linux container wrapper' || return
   assert_contains "$STDOUT_FILE" '-h, --help' || return
+  assert_contains "$STDOUT_FILE" '-V, --version' || return
+  assert_contains "$STDOUT_FILE" '-v, --verbose' || return
+  assert_contains "$STDOUT_FILE" '-n, --network NAME' || return
+  assert_contains "$STDOUT_FILE" '-w, --workdir PATH' || return
   assert_contains "$STDOUT_FILE" 'https://github.com/343dev/jailbot' || return
   assert_no_control_bytes "$STDOUT_FILE" || return
   assert_empty "$STDERR_FILE" || return
@@ -328,6 +332,15 @@ test_help_wins_before_separator() {
 
 test_version_is_safe_without_configuration() {
   run_cli_without_config --version
+
+  assert_status 0 || return
+  assert_file_content "$STDOUT_FILE" "jailbot 2.0.0${NL}" || return
+  assert_empty "$STDERR_FILE" || return
+  assert_no_docker_calls
+}
+
+test_short_version_is_safe_without_configuration() {
+  run_cli_without_config -V
 
   assert_status 0 || return
   assert_file_content "$STDOUT_FILE" "jailbot 2.0.0${NL}" || return
@@ -460,6 +473,14 @@ test_successful_startup_is_quiet_without_verbose() {
 
 test_verbose_reports_docker_validation_progress() {
   run_cli --verbose -- echo test
+
+  assert_status 0 || return
+  assert_contains "$STDERR_FILE" '[VERBOSE] Checking Docker daemon and current context' || return
+  assert_contains "$STDERR_FILE" '[VERBOSE] Checking local Docker image: stubimage'
+}
+
+test_short_verbose_reports_docker_validation_progress() {
+  run_cli -v -- echo test
 
   assert_status 0 || return
   assert_contains "$STDERR_FILE" '[VERBOSE] Checking Docker daemon and current context' || return
@@ -793,6 +814,58 @@ test_terminal_program_environment_is_forwarded() {
   assert_run_args "$@"
 }
 
+test_short_network_is_passed_to_docker() {
+  run_cli -n test-network -- echo test
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i --network test-network \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage echo test
+  assert_run_args "$@"
+}
+
+test_short_workdir_mounts_workspace() {
+  path_dir="$TEST_ROOT/short-workdir"
+  mkdir -p "$path_dir"
+
+  run_cli -w "$path_dir" -- pwd
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i \
+    --mount "type=bind,source=$path_dir,target=/workspace" \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage pwd
+  assert_run_args "$@"
+}
+
+test_short_workdir_without_value_is_rejected() {
+  assert_validation_failure '-w requires a path argument' -w
+}
+
+test_short_network_without_value_is_rejected() {
+  assert_validation_failure '-n requires a network name argument' -n
+}
+
 test_repeated_directory_uses_one_mount_and_one_target() {
   path_dir="$TEST_ROOT/repeated-project"
   mkdir -p "$path_dir"
@@ -979,6 +1052,7 @@ main() {
   run_test 'short help is safe without configuration' test_short_help_is_safe_without_configuration
   run_test 'help wins over errors before the separator' test_help_wins_before_separator
   run_test 'version is safe without configuration' test_version_is_safe_without_configuration
+  run_test 'short version is safe without configuration' test_short_version_is_safe_without_configuration
   run_test 'separator passes wrapper-like arguments to the container' test_separator_passes_wrapper_like_arguments
   run_test 'unknown options have a strict failure contract' test_unknown_option_has_exact_failure_contract
   run_test 'missing configuration stops before Docker' test_missing_configuration_stops_before_docker
@@ -993,6 +1067,7 @@ main() {
   run_test 'missing SSH socket is rejected before Docker' test_missing_ssh_socket_is_rejected_before_docker
   run_test 'successful startup is quiet without verbose' test_successful_startup_is_quiet_without_verbose
   run_test 'verbose reports Docker validation progress' test_verbose_reports_docker_validation_progress
+  run_test 'short verbose reports Docker validation progress' test_short_verbose_reports_docker_validation_progress
   run_test 'Docker permission errors are actionable' test_daemon_permission_error_is_actionable
   run_test 'Docker context errors are actionable and verbose' test_docker_context_error_is_actionable_and_verbose
   run_test 'missing local images are actionable' test_missing_local_image_is_actionable
@@ -1007,6 +1082,10 @@ main() {
   run_test 'bare invocation adds no container command' test_bare_invocation_adds_no_container_command
   run_test 'ordinary commands produce a complete Docker argv' test_ordinary_command_has_complete_docker_argv
   run_test 'terminal program environment is forwarded when set' test_terminal_program_environment_is_forwarded
+  run_test 'short network is passed to Docker' test_short_network_is_passed_to_docker
+  run_test 'short workdir mounts the host directory at workspace' test_short_workdir_mounts_workspace
+  run_test 'short workdir without a value is rejected' test_short_workdir_without_value_is_rejected
+  run_test 'short network without a value is rejected' test_short_network_without_value_is_rejected
   run_test 'repeated directories use one mount and target' test_repeated_directory_uses_one_mount_and_one_target
   run_test 'colliding mount targets are rejected before Docker' test_colliding_mount_targets_are_rejected_before_docker
   run_test 'comma paths are rejected before Docker' test_comma_path_is_rejected_before_docker

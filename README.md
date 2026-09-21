@@ -87,13 +87,13 @@ image's entrypoint or default command.
 
 | Option                             | Description                                           |
 | ---------------------------------- | ----------------------------------------------------- |
-| `-h`, `--help`                     | Show help without requiring Docker configuration      |
-| `--version`                        | Print the Jailbot version                             |
-| `--verbose`                        | Write mount and Docker diagnostics to `stderr`        |
-| `--git`                            | Mount the host's Git configuration files read-only    |
-| `--ssh`                            | Forward the host SSH agent; fail if it is unavailable |
-| `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run`         |
-| `--workdir PATH`, `--workdir=PATH` | Mount an existing host directory at `/workspace`      |
+| `-h`, `--help`                           | Show help without requiring Docker configuration      |
+| `-V`, `--version`                        | Print the Jailbot version                             |
+| `-v`, `--verbose`                        | Write mount and Docker diagnostics to `stderr`        |
+| `--git`                                  | Mount the host's Git configuration files read-only    |
+| `--ssh`                                  | Forward the host SSH agent; fail if it is unavailable |
+| `-n NAME`, `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run`    |
+| `-w PATH`, `--workdir PATH`, `--workdir=PATH` | Mount an existing host directory at `/workspace` |
 
 ### Examples
 

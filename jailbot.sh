@@ -745,15 +745,15 @@ Examples:
   ${script_name} -- cat ./local-file.txt
 
 Options:
-  -h, --help         Show this help message and exit
-  --version          Show the Jailbot version and exit
-  --verbose          Enable verbose diagnostics on stderr
-  --git              Mount Git configuration files read-only
-  --ssh              Forward the SSH agent socket; fail if unavailable
-  --network=NAME     Pass a non-empty network name to docker run
-  --network NAME     Pass a network name to docker run
-  --workdir=PATH     Mount an existing host directory at /workspace
-  --workdir PATH     Mount an existing host directory at /workspace
+  -h, --help             Show this help message and exit
+  -V, --version          Show the Jailbot version and exit
+  -v, --verbose          Enable verbose diagnostics on stderr
+  --git                  Mount Git configuration files read-only
+  --ssh                  Forward the SSH agent socket; fail if unavailable
+  -n, --network NAME     Pass a non-empty network name to docker run
+      --network=NAME     Equivalent form with an equals sign
+  -w, --workdir PATH     Mount an existing host directory at /workspace
+      --workdir=PATH     Equivalent form with an equals sign
 
 Invocation:
   Options before -- belong to Jailbot. Everything after -- is the container
@@ -802,7 +802,7 @@ handle_discovery_options() {
       --)
         break
         ;;
-      --version)
+      -V|--version)
         show_version
         exit 0
         ;;
@@ -846,12 +846,12 @@ main() {
         exit 0
         ;;
 
-      --version)
+      -V|--version)
         show_version
         exit 0
         ;;
 
-      --verbose)
+      -v|--verbose)
         VERBOSE=true
         shift
         ;;
@@ -872,10 +872,11 @@ main() {
         shift
         ;;
 
-      --workdir)
+      -w|--workdir)
+        option_name="$arg"
         shift
         if [ $# -eq 0 ] || [ "${1:-}" = "--" ]; then
-          log_error "--workdir requires a path argument"
+          log_error "$option_name requires a path argument"
         fi
         handle_mount_only "$1"
         shift
@@ -889,10 +890,11 @@ main() {
         shift
         ;;
 
-      --network)
+      -n|--network)
+        option_name="$arg"
         shift
         if [ $# -eq 0 ] || [ "${1:-}" = "--" ]; then
-          log_error "--network requires a network name argument"
+          log_error "$option_name requires a network name argument"
         fi
         DOCKER_NETWORK="$1"
         shift

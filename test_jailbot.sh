@@ -303,6 +303,7 @@ test_long_help_is_safe_without_configuration() {
   assert_contains "$STDOUT_FILE" '-h, --help' || return
   assert_contains "$STDOUT_FILE" '-V, --version' || return
   assert_contains "$STDOUT_FILE" '-v, --verbose' || return
+  assert_contains "$STDOUT_FILE" '-r, --read-only' || return
   assert_contains "$STDOUT_FILE" '-n, --network NAME' || return
   assert_contains "$STDOUT_FILE" '-w, --workdir PATH' || return
   assert_contains "$STDOUT_FILE" 'https://github.com/343dev/jailbot' || return
@@ -858,6 +859,57 @@ test_short_workdir_mounts_workspace() {
   assert_run_args "$@"
 }
 
+test_read_only_mounts_automatic_file_parent_read_only() {
+  path_dir="$TEST_ROOT/read-only-file"
+  path_file="$path_dir/input.txt"
+  mkdir -p "$path_dir"
+  printf 'data\n' > "$path_file"
+
+  run_cli --read-only -- cat "$path_file"
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  container_dir="/workspace/$(basename "$path_dir")"
+  set -- --rm --name "$container_name" -i \
+    --mount "type=bind,source=$path_dir,target=$container_dir,readonly" \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage cat "$container_dir/$(basename "$path_file")"
+  assert_run_args "$@"
+}
+
+test_short_read_only_after_workdir_is_order_independent() {
+  path_dir="$TEST_ROOT/read-only-workdir"
+  mkdir -p "$path_dir"
+
+  run_cli -w "$path_dir" -r -- pwd
+
+  assert_status 0 || return
+  container_name=$(captured_run_arg 3) || return 1
+  timezone=''
+  if [ -L /etc/localtime ]; then
+    timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+  elif [ -f /etc/timezone ]; then
+    timezone=$(cat /etc/timezone)
+  fi
+  set -- --rm --name "$container_name" -i \
+    --mount "type=bind,source=$path_dir,target=/workspace,readonly" \
+    --user jailbot --env HOME=/home/jailbot
+  if [ -n "$timezone" ]; then
+    set -- "$@" --env "TZ=$timezone"
+  fi
+  set -- "$@" --workdir /workspace stubimage pwd
+  assert_run_args "$@"
+}
+
 test_short_workdir_without_value_is_rejected() {
   assert_validation_failure '-w requires a path argument' -w
 }
@@ -1084,6 +1136,8 @@ main() {
   run_test 'terminal program environment is forwarded when set' test_terminal_program_environment_is_forwarded
   run_test 'short network is passed to Docker' test_short_network_is_passed_to_docker
   run_test 'short workdir mounts the host directory at workspace' test_short_workdir_mounts_workspace
+  run_test 'read-only mounts automatic file parents read-only' test_read_only_mounts_automatic_file_parent_read_only
+  run_test 'short read-only is independent of workdir option order' test_short_read_only_after_workdir_is_order_independent
   run_test 'short workdir without a value is rejected' test_short_workdir_without_value_is_rejected
   run_test 'short network without a value is rejected' test_short_network_without_value_is_rejected
   run_test 'repeated directories use one mount and target' test_repeated_directory_uses_one_mount_and_one_target

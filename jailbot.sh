@@ -34,6 +34,7 @@ readonly CONTAINER_WORKDIR="/workspace"
 
 # Runtime state (POSIX-compatible)
 VERBOSE=false
+READ_ONLY=false
 MOUNT_GIT=false
 MOUNT_SSH=false
 
@@ -425,7 +426,7 @@ add_mount() {
     log_error "Mount target collision: $container_path is already used by $FOUND_MOUNT_HOST; cannot also mount $host_path"
   fi
 
-  if [ "$readonly_flag" = "readonly" ]; then
+  if [ "$READ_ONLY" = true ] || [ "$readonly_flag" = "readonly" ]; then
     spec="type=bind,source=$host_path,target=$container_path,readonly"
   else
     spec="type=bind,source=$host_path,target=$container_path"
@@ -748,6 +749,7 @@ Options:
   -h, --help             Show this help message and exit
   -V, --version          Show the Jailbot version and exit
   -v, --verbose          Enable verbose diagnostics on stderr
+  -r, --read-only        Mount all host filesystem paths read-only
   --git                  Mount Git configuration files read-only
   --ssh                  Forward the SSH agent socket; fail if unavailable
   -n, --network NAME     Pass a non-empty network name to docker run
@@ -784,6 +786,19 @@ show_version() {
   printf 'jailbot %s\n' "$VERSION"
 }
 
+detect_global_mount_mode() {
+  for arg in "$@"; do
+    case "$arg" in
+      --)
+        break
+        ;;
+      -r|--read-only)
+        READ_ONLY=true
+        ;;
+    esac
+  done
+}
+
 handle_discovery_options() {
   for arg in "$@"; do
     case "$arg" in
@@ -813,6 +828,10 @@ handle_discovery_options() {
 main() {
   # Discovery commands are side-effect free and do not require configuration.
   handle_discovery_options "$@"
+
+  # Mounts can be planned while parsing options, so detect the global mount
+  # mode first to make option ordering irrelevant.
+  detect_global_mount_mode "$@"
 
   # Validate required environment variables
   validate_env
@@ -853,6 +872,10 @@ main() {
 
       -v|--verbose)
         VERBOSE=true
+        shift
+        ;;
+
+      -r|--read-only)
         shift
         ;;
 

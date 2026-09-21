@@ -24,6 +24,7 @@ jailbot -- python3 ./process.py ~/data/input.csv
 ## Features
 
 - Automatically mounts existing file and directory arguments
+- Can mount all detected host filesystem paths read-only
 - Supports absolute, relative, and `~/` paths
 - Mounts a project directly at `/workspace` with `--workdir`
 - Optionally mounts Git configuration and forwards the SSH agent
@@ -90,6 +91,7 @@ image's entrypoint or default command.
 | `-h`, `--help`                           | Show help without requiring Docker configuration      |
 | `-V`, `--version`                        | Print the Jailbot version                             |
 | `-v`, `--verbose`                        | Write mount and Docker diagnostics to `stderr`        |
+| `-r`, `--read-only`                      | Mount all host filesystem paths read-only             |
 | `--git`                                  | Mount the host's Git configuration files read-only    |
 | `--ssh`                                  | Forward the host SSH agent; fail if it is unavailable |
 | `-n NAME`, `--network NAME`, `--network=NAME` | Pass a non-empty network name to `docker run`    |
@@ -106,6 +108,9 @@ jailbot --workdir=. -- make test
 
 # Mount and translate an individual file argument
 jailbot -- cat ./data.txt
+
+# Prevent commands from modifying mounted host paths
+jailbot --read-only --workdir=. -- make test
 
 # Use files from different host directories
 jailbot -- python3 ./process.py ~/data/input.csv
@@ -161,6 +166,7 @@ corresponding container path.
 - **Directory:** mounts it at `/workspace/<directory-name>`
 - **`--workdir`:** mounts the selected directory directly at `/workspace`
 - **Repeated path:** reuses the existing mount
+- **`--read-only`:** makes every automatically created bind mount read-only
 - **Conflicting target:** fails before starting Docker
 
 For example, if `/home/alice/project/config.json` exists:
@@ -171,6 +177,13 @@ jailbot -- cat /home/alice/project/config.json
 
 Jailbot mounts `/home/alice/project` at `/workspace/project` and passes
 `/workspace/project/config.json` to `cat`.
+
+With `-r` or `--read-only`, mounts created for command arguments and
+`--workdir` cannot be written from the container. Because an individual file
+is exposed by mounting its parent directory, that entire parent mount becomes
+read-only. The persistent home volume configured by `JAILBOT_CONTAINER_VOLUME`
+and the SSH agent socket are not affected. This option is distinct from
+Docker's `--read-only`: the container filesystem itself remains writable.
 
 Only existing host paths are mounted automatically. Ordinary values, URLs, and
 other non-path arguments are passed through unchanged.

@@ -1,11 +1,8 @@
-<div align="center">
-<img width="320" height="235" alt="Jailbot as Jailpup" src="./assets/jailpup.jpg">
+<img src="jailbot-logo.svg" alt="Jailbot logo" width="128">
 
 # Jailbot 2.0
 
 **Run commands in a Docker Linux environment without writing mount flags by hand.**
-
-</div>
 
 Jailbot detects existing host paths in command arguments, mounts them into the
 container, and rewrites the arguments to their container paths.

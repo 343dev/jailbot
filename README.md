@@ -1,4 +1,4 @@
-<img src="jailbot-logo.svg" alt="Jailbot logo" width="128">
+<img src="jailbot-logo.png" alt="Glossy black robot face with neon green pixel-style eyes and smile" title="Your command has been sentenced to a container." width="128">
 
 # Jailbot 2.0
 

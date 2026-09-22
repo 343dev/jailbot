@@ -7,8 +7,8 @@ RUN apt-get update \
 	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
 	# Things you can't live without
-	git vim curl unzip ca-certificates less fd-find ripgrep shellcheck sudo \
-	python3 python3-pip build-essential pkg-config man-db openssh-client procps \
+	git vim curl unzip ca-certificates less fd-find ripgrep shellcheck sudo file \
+	python3 python3-pip python-is-python3 build-essential pkg-config man-db openssh-client procps \
 	&& python3 -m pip install PyYAML --break-system-packages \
 	&& rm -rf /var/lib/apt/lists/*
 

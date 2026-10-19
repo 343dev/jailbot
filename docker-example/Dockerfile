@@ -7,7 +7,7 @@ RUN apt-get update \
 	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
 	# Things you can't live without
-	git vim curl unzip ca-certificates less fd-find ripgrep shellcheck sudo file \
+	git vim curl unzip ca-certificates less fd-find ripgrep shellcheck sudo file ffmpeg jq \
 	python3 python3-pip python-is-python3 build-essential pkg-config man-db openssh-client procps \
 	# Chromium deps
 	fonts-noto-color-emoji fonts-liberation libfontconfig1 libfreetype6 \
